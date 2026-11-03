@@ -63,7 +63,11 @@ impl Engine {
         Self::default()
     }
     #[wasm_bindgen(js_name=addFont)]
-    pub fn add_font(&mut self, family: String, bytes: Vec<u8>) -> std::result::Result<(), JsValue> {
+    pub fn add_font(
+        &mut self,
+        family: Option<String>,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<(), JsValue> {
         self.budget(bytes.len(), 0)?;
         if bytes.len() > 64 * 1024 * 1024 {
             return Err(js("font exceeds 64 MiB"));

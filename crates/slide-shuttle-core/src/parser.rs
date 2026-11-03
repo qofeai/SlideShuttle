@@ -88,83 +88,28 @@ pub fn parse(source: &str) -> Result<Deck> {
     if width <= 0.0 || height <= 0.0 || width > 16384.0 || height > 16384.0 {
         return Err(invalid("page size must be in (0, 16384]px"));
     }
-    let mut tokens = BTreeMap::new();
-    let mut classes = BTreeMap::new();
-    let mut templates = BTreeMap::new();
-    let mut fonts = Vec::new();
-    let mut assets = BTreeMap::new();
+    let mut cx = Context::default();
+    let mut errors = Errors::default();
     for n in root.children().filter(|n| n.is_element()) {
-        match n.tag_name().name() {
-            "Token" => {
-                attrs(n, &["name", "value"])?;
-                unique_insert(
-                    &mut tokens,
-                    required(n, "name")?,
-                    required(n, "value")?.to_owned(),
-                )?;
-            }
-            "Style" => {
-                attrs(n, &["name"])?;
-                unique_insert(
-                    &mut classes,
-                    required(n, "name")?,
-                    n.text().unwrap_or("").to_owned(),
-                )?;
-            }
-            "Component" => {
-                attrs(n, &["name"])?;
-                unique_insert(&mut templates, required(n, "name")?, n)?;
-            }
-            "Font" => {
-                attrs(n, &["family", "src"])?;
-                fonts.push(FontSpec {
-                    family: required(n, "family")?.into(),
-                    src: required(n, "src")?.into(),
-                });
-            }
-            "Asset" => {
-                attrs(n, &["id", "src"])?;
-                unique_insert(
-                    &mut assets,
-                    required(n, "id")?,
-                    required(n, "src")?.to_owned(),
-                )?;
-            }
-            "Slide" => {}
-            other => return Err(invalid(format!("unknown Deck child <{other}>"))),
-        }
+        let defined = cx.define(n);
+        errors.keep(n, defined);
     }
-    let mut cx = Context {
-        tokens,
-        classes,
-        templates,
-        ids: BTreeSet::new(),
-        count: 0,
-    };
-    for definition in cx.classes.values() {
-        cx.css(definition)?;
+    for n in root
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "Style")
+    {
+        let checked = cx.css(n.text().unwrap_or(""));
+        errors.keep(n, checked);
     }
     let mut slides = Vec::new();
     for n in root
         .children()
         .filter(|n| n.is_element() && n.tag_name().name() == "Slide")
     {
-        attrs(n, &["id", "background"])?;
-        let id = required(n, "id")?.to_owned();
-        cx.claim(&id)?;
-        let background = cx.resolve(n.attribute("background").unwrap_or("#FFFFFF"))?;
-        Color::parse(&background)?;
-        let nodes = n
-            .children()
-            .filter(|n| n.is_element())
-            .map(|n| cx.node(n, "", &BTreeMap::new(), 0))
-            .collect::<Result<_>>()?;
-        slides.push(Slide {
-            id,
-            background,
-            nodes,
-        });
+        let slide = cx.slide(n);
+        slides.extend(errors.keep(n, slide));
     }
+    errors.finish()?;
     if slides.is_empty() || slides.len() > 300 {
         return Err(invalid("Deck requires 1–300 slides"));
     }
@@ -177,10 +122,39 @@ pub fn parse(source: &str) -> Result<Deck> {
             .attribute("font-family")
             .unwrap_or("Noto Sans CJK SC")
             .into(),
-        fonts,
-        assets,
+        fonts: cx.fonts,
+        assets: cx.assets,
         slides,
     })
+}
+/// Collects located errors so one check reports every independent mistake.
+#[derive(Default)]
+struct Errors(Vec<SourceError>);
+impl Errors {
+    fn keep<T>(&mut self, n: X<'_, '_>, result: Result<T>) -> Option<T> {
+        match result.map_err(|e| at(&source(n), e)) {
+            Ok(v) => Some(v),
+            Err(Error::Source(found)) => {
+                self.0.extend(found);
+                None
+            }
+            Err(_) => unreachable!("at() always locates"),
+        }
+    }
+    fn finish(mut self) -> Result<()> {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        self.0.truncate(50);
+        Err(Error::Source(self.0))
+    }
+}
+fn source(n: X<'_, '_>) -> Source {
+    let pos = n.document().text_pos_at(n.range().start);
+    Source {
+        line: pos.row,
+        column: pos.col,
+    }
 }
 fn unique_insert<V>(map: &mut BTreeMap<String, V>, k: &str, v: V) -> Result<()> {
     if map.insert(k.to_owned(), v).is_some() {
@@ -206,14 +180,88 @@ fn required<'a>(n: X<'a, 'a>, key: &str) -> Result<&'a str> {
         .filter(|x| !x.is_empty())
         .ok_or_else(|| invalid(format!("<{}> requires {key}", n.tag_name().name())))
 }
+#[derive(Default)]
 struct Context<'a> {
     tokens: BTreeMap<String, String>,
     classes: BTreeMap<String, String>,
     templates: BTreeMap<String, X<'a, 'a>>,
+    fonts: Vec<FontSpec>,
+    assets: BTreeMap<String, String>,
     ids: BTreeSet<String>,
     count: usize,
 }
-impl Context<'_> {
+impl<'a> Context<'a> {
+    fn define(&mut self, n: X<'a, 'a>) -> Result<()> {
+        match n.tag_name().name() {
+            "Token" => {
+                attrs(n, &["name", "value"])?;
+                unique_insert(
+                    &mut self.tokens,
+                    required(n, "name")?,
+                    required(n, "value")?.to_owned(),
+                )
+            }
+            "Style" => {
+                attrs(n, &["name"])?;
+                unique_insert(
+                    &mut self.classes,
+                    required(n, "name")?,
+                    n.text().unwrap_or("").to_owned(),
+                )
+            }
+            "Component" => {
+                attrs(n, &["name"])?;
+                unique_insert(&mut self.templates, required(n, "name")?, n)
+            }
+            "Font" => {
+                attrs(n, &["family", "src"])?;
+                self.fonts.push(FontSpec {
+                    family: required(n, "family")?.into(),
+                    src: required(n, "src")?.into(),
+                });
+                Ok(())
+            }
+            "Asset" => {
+                attrs(n, &["id", "src"])?;
+                unique_insert(
+                    &mut self.assets,
+                    required(n, "id")?,
+                    required(n, "src")?.to_owned(),
+                )
+            }
+            "Slide" => Ok(()),
+            other => Err(invalid(format!("unknown Deck child <{other}>"))),
+        }
+    }
+    fn slide(&mut self, n: X<'_, '_>) -> Result<Slide> {
+        attrs(n, &["id", "background"])?;
+        let id = required(n, "id")?.to_owned();
+        self.claim(&id)?;
+        let background = self.resolve(n.attribute("background").unwrap_or("#FFFFFF"))?;
+        Color::parse(&background)?;
+        let nodes = self.nodes(n, "", &BTreeMap::new(), 0)?;
+        Ok(Slide {
+            id,
+            background,
+            nodes,
+        })
+    }
+    fn nodes(
+        &mut self,
+        parent: X<'_, '_>,
+        prefix: &str,
+        params: &BTreeMap<String, String>,
+        depth: usize,
+    ) -> Result<Vec<Node>> {
+        let mut errors = Errors::default();
+        let mut nodes = Vec::new();
+        for n in parent.children().filter(|n| n.is_element()) {
+            let node = self.node(n, prefix, params, depth);
+            nodes.extend(errors.keep(n, node));
+        }
+        errors.finish()?;
+        Ok(nodes)
+    }
     fn claim(&mut self, id: &str) -> Result<()> {
         if id.len() > 200
             || !id
@@ -226,23 +274,34 @@ impl Context<'_> {
         Ok(())
     }
     fn resolve(&self, s: &str) -> Result<String> {
-        let mut out = s.to_owned();
-        for _ in 0..16 {
-            let Some(start) = out.find("var(--") else {
-                return Ok(out);
-            };
-            let end = out[start..]
+        self.expand(s, 0)
+    }
+    /// Depth bounds cycles; the output bound stops exponential fan-out.
+    fn expand(&self, s: &str, depth: usize) -> Result<String> {
+        if depth > 16 {
+            return Err(invalid("cyclic or too deeply nested token reference"));
+        }
+        let mut out = String::new();
+        let mut rest = s;
+        while let Some(start) = rest.find("var(--") {
+            let end = rest[start..]
                 .find(')')
                 .ok_or_else(|| invalid("unterminated token reference"))?
                 + start;
-            let key = &out[start + 6..end];
+            let key = &rest[start + 6..end];
             let v = self
                 .tokens
                 .get(key)
                 .ok_or_else(|| invalid(format!("unknown token --{key}")))?;
-            out.replace_range(start..=end, v);
+            out.push_str(&rest[..start]);
+            out.push_str(&self.expand(v, depth + 1)?);
+            if out.len() > 64 * 1024 {
+                return Err(invalid("token expansion exceeds 64 KiB"));
+            }
+            rest = &rest[end + 1..];
         }
-        Err(invalid("cyclic or excessive token expansion"))
+        out.push_str(rest);
+        Ok(out)
     }
     fn css(&self, s: &str) -> Result<Css> {
         let resolved = self.resolve(s)?;
@@ -259,7 +318,7 @@ impl Context<'_> {
             if v.is_empty() {
                 return Err(invalid(format!("empty CSS value for {k}")));
             }
-            map.insert(k.into(), v.into());
+            declare(&mut map, k, v)?;
         }
         Ok(map)
     }
@@ -325,7 +384,6 @@ impl Context<'_> {
         if let Some(s) = n.attribute("style") {
             style.extend(self.css(&substitute(s, params)?)?);
         }
-        let pos = n.document().text_pos_at(n.range().start);
         let kind = match tag {
             "Box" => Kind::Box,
             "Group" => Kind::Group,
@@ -456,10 +514,7 @@ impl Context<'_> {
             _ => return Err(invalid(format!("unknown element <{tag}>"))),
         };
         let children = if matches!(kind, Kind::Box | Kind::Group) {
-            n.children()
-                .filter(|n| n.is_element())
-                .map(|n| self.node(n, prefix, params, depth + 1))
-                .collect::<Result<Vec<_>>>()?
+            self.nodes(n, prefix, params, depth + 1)?
         } else {
             Vec::new()
         };
@@ -483,10 +538,7 @@ impl Context<'_> {
             style,
             kind,
             children,
-            source: Source {
-                line: pos.row,
-                column: pos.col,
-            },
+            source: source(n),
         })
     }
     fn spans(&self, n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<Vec<Span>> {
@@ -540,6 +592,51 @@ impl Context<'_> {
         }
         Ok(out)
     }
+}
+/// Stores only longhands, so a later declaration overrides an earlier one as in CSS.
+fn declare(map: &mut Css, k: &str, v: &str) -> Result<()> {
+    let p = v.split_whitespace().collect::<Vec<_>>();
+    let mut set = |k: &str, v: &str| map.insert(k.into(), v.into());
+    match k {
+        "padding" | "margin" => {
+            let [t, r, b, l] = match p[..] {
+                [a] => [a, a, a, a],
+                [t, r] => [t, r, t, r],
+                [t, r, b] => [t, r, b, r],
+                [t, r, b, l] => [t, r, b, l],
+                _ => return Err(invalid(format!("{k} expects 1–4 lengths"))),
+            };
+            for (side, v) in ["top", "right", "bottom", "left"]
+                .into_iter()
+                .zip([t, r, b, l])
+            {
+                set(&format!("{k}-{side}"), v);
+            }
+        }
+        "gap" => {
+            let [row, column] = match p[..] {
+                [a] => [a, a],
+                [row, column] => [row, column],
+                _ => return Err(invalid("gap expects 1–2 lengths")),
+            };
+            set("row-gap", row);
+            set("column-gap", column);
+        }
+        "border" => {
+            let [width, "solid", color] = p[..] else {
+                return Err(invalid("border syntax: <length> solid <hex>"));
+            };
+            set("border-width", width);
+            set("border-color", color);
+        }
+        "background-color" => {
+            set("background", v);
+        }
+        _ => {
+            set(k, v);
+        }
+    }
+    Ok(())
 }
 fn plain(n: X<'_, '_>) -> String {
     n.descendants()

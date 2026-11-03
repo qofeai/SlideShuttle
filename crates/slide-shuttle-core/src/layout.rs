@@ -40,7 +40,10 @@ pub(crate) fn layout_with_text(
         let roots = slide
             .nodes
             .iter()
-            .map(|n| build(n, &base, &mut tree, &mut mapping, &mut computed, false))
+            .map(|n| {
+                build(n, &base, &mut tree, &mut mapping, &mut computed, false)
+                    .map_err(|e| at(&n.source, e))
+            })
             .collect::<Result<Vec<_>>>()?;
         let root = tree
             .new_with_children(
@@ -123,7 +126,8 @@ pub(crate) fn layout_with_text(
                 resources,
                 &mut page.items,
                 &mut scene.diagnostics,
-            )?;
+            )
+            .map_err(|e| at(&node.source, e))?;
         }
         for item in &page.items {
             if item.rect.x < -0.5
@@ -170,6 +174,7 @@ fn build(
                 computed,
                 in_group || matches!(n.kind, Kind::Group),
             )
+            .map_err(|e| at(&c.source, e))
         })
         .collect::<Result<Vec<_>>>()?;
     let style = box_style(&n.style)?;
@@ -316,8 +321,6 @@ fn box_style(css: &Css) -> Result<taffy::Style> {
             "max-width" => s.max_size.width = lpa(v)?,
             "min-height" => s.min_size.height = lpa(v)?,
             "max-height" => s.max_size.height = lpa(v)?,
-            "padding" => s.padding = edges(v, lp)?,
-            "margin" => s.margin = edges(v, lpa)?,
             "padding-top" => s.padding.top = lp(v)?,
             "padding-right" => s.padding.right = lp(v)?,
             "padding-bottom" => s.padding.bottom = lp(v)?,
@@ -326,16 +329,6 @@ fn box_style(css: &Css) -> Result<taffy::Style> {
             "margin-right" => s.margin.right = lpa(v)?,
             "margin-bottom" => s.margin.bottom = lpa(v)?,
             "margin-left" => s.margin.left = lpa(v)?,
-            "gap" => {
-                let a = v.split_whitespace().collect::<Vec<_>>();
-                if a.is_empty() || a.len() > 2 {
-                    return Err(invalid("invalid gap"));
-                }
-                s.gap = Size {
-                    height: lp(a[0])?,
-                    width: lp(a.get(1).unwrap_or(&a[0]))?,
-                };
-            }
             "row-gap" => s.gap.height = lp(v)?,
             "column-gap" => s.gap.width = lp(v)?,
             "position" => {
@@ -381,14 +374,6 @@ fn box_style(css: &Css) -> Result<taffy::Style> {
             "grid-column" => s.grid_column = placement(v)?,
             "grid-row" => s.grid_row = placement(v)?,
             "border-width" => s.border = edges(v, lp)?,
-            "border" => {
-                let p = v.split_whitespace().collect::<Vec<_>>();
-                if p.len() != 3 || p[1] != "solid" {
-                    return Err(invalid("border syntax: <length> solid <hex>"));
-                }
-                s.border = edges(p[0], lp)?;
-                Color::parse(p[2])?;
-            }
             "box-sizing" => {
                 if v != "border-box" {
                     return Err(invalid("only border-box is supported"));
@@ -422,8 +407,7 @@ fn nonnegative(s: &str) -> Result<f32> {
 fn visual(n: &Node) -> Result<(Color, Option<LinearGradient>, Color, f32, f32, f32)> {
     let value = n
         .style
-        .get("background-color")
-        .or(n.style.get("background"))
+        .get("background")
         .map(String::as_str)
         .unwrap_or("transparent");
     let gradient = if let Some(v) = value
@@ -454,23 +438,18 @@ fn visual(n: &Node) -> Result<(Color, Option<LinearGradient>, Color, f32, f32, f
     } else {
         Color::parse(value)?
     };
-    let mut stroke = n
+    let stroke = n
         .style
         .get("border-color")
         .map(|v| Color::parse(v))
         .transpose()?
         .unwrap_or(Color::BLACK);
-    let mut width = n
+    let width = n
         .style
         .get("border-width")
         .map(|v| length_px(v))
         .transpose()?
         .unwrap_or(0.0);
-    if let Some(v) = n.style.get("border") {
-        let p = v.split_whitespace().collect::<Vec<_>>();
-        width = length_px(p[0])?;
-        stroke = Color::parse(p[2])?;
-    }
     let radius = n
         .style
         .get("border-radius")
@@ -645,7 +624,8 @@ fn emit(
             labels,
             series,
         } => {
-            let primitives = chart_items(&item, chart_type, labels, series, text)?;
+            let primitives =
+                chart_items(&item, chart_type, labels, series, text, page, diagnostics)?;
             Draw::Chart {
                 chart_type: chart_type.clone(),
                 labels: labels.clone(),
@@ -674,7 +654,8 @@ fn emit(
             resources,
             items,
             diagnostics,
-        )?;
+        )
+        .map_err(|e| at(&c.source, e))?;
     }
     Ok(())
 }
@@ -825,6 +806,8 @@ fn chart_items(
     labels: &[String],
     series: &[Series],
     text: &mut TextEngine,
+    page: &str,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Vec<Item>> {
     let mut out = Vec::new();
     let r = parent.rect;
@@ -949,6 +932,23 @@ fn chart_items(
             color,
             text,
         )?);
+    }
+    // Labels never wrap, so a glyph outside its slot or the chart is clipped content.
+    for item in &out {
+        if let Draw::Text { glyphs, .. } = &item.kind
+            && glyphs.iter().any(|g| {
+                g.x < item.rect.x.max(r.x) - 0.5
+                    || g.x + g.advance > item.rect.right().min(r.right()) + 0.5
+            })
+        {
+            diagnostics.push(diag(
+                "chart_label_overflow",
+                "error",
+                page,
+                item,
+                "chart tick, category label or legend does not fit inside the chart",
+            ));
+        }
     }
     Ok(out)
 }

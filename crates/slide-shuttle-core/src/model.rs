@@ -16,6 +16,27 @@ pub enum Error {
     Zip(#[from] zip::result::ZipError),
     #[error("I/O: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))]
+    Source(Vec<SourceError>),
+}
+/// An authoring error tied to the element that caused it.
+#[derive(Clone, Debug, Serialize, Deserialize, thiserror::Error)]
+#[error("line {line}, column {column}: {message}")]
+pub struct SourceError {
+    pub line: u32,
+    pub column: u32,
+    pub message: String,
+}
+/// Attach a source position unless the error is already located.
+pub(crate) fn at(source: &Source, error: Error) -> Error {
+    match error {
+        Error::Source(_) => error,
+        other => Error::Source(vec![SourceError {
+            line: source.line,
+            column: source.column,
+            message: other.to_string(),
+        }]),
+    }
 }
 pub type Result<T> = std::result::Result<T, Error>;
 pub(crate) fn invalid(message: impl Into<String>) -> Error {
@@ -102,7 +123,8 @@ pub struct Series {
 
 #[derive(Clone, Debug)]
 pub struct FontResource {
-    pub family: String,
+    /// Family the file must provide; `None` loads the file without a declared family.
+    pub family: Option<String>,
     pub bytes: Vec<u8>,
 }
 #[derive(Clone, Debug, Default)]

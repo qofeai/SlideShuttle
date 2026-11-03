@@ -175,7 +175,7 @@ fn run(cli: Cli) -> Result<()> {
             let mut resources = Resources::default();
             for path in font {
                 resources.fonts.push(FontResource {
-                    family: "explicit-cli-font".into(),
+                    family: None,
                     bytes: io::read(&path, 64 * 1024 * 1024)?,
                 });
             }
@@ -302,7 +302,7 @@ fn run(cli: Cli) -> Result<()> {
             let mut r = Resources::default();
             for f in font {
                 r.fonts.push(FontResource {
-                    family: "explicit-cli-font".into(),
+                    family: None,
                     bytes: io::read(&f, 64 * 1024 * 1024)?,
                 });
             }

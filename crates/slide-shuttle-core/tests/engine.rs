@@ -13,11 +13,11 @@ fn resources() -> Resources {
     Resources {
         fonts: vec![
             FontResource {
-                family: "DejaVu Sans".into(),
+                family: Some("DejaVu Sans".into()),
                 bytes: include_bytes!("fonts/DejaVuSans.ttf").to_vec(),
             },
             FontResource {
-                family: "DejaVu Sans".into(),
+                family: Some("DejaVu Sans".into()),
                 bytes: include_bytes!("fonts/DejaVuSans-Bold.ttf").to_vec(),
             },
         ],
@@ -133,6 +133,86 @@ fn tokens_entities_and_components_are_bounded() {
     assert!(parse(r#"<Deck version="1"><Token name="x" value="var(--x)"/><Slide id="p"><Box id="b" style="width:var(--x)"/></Slide></Deck>"#).is_err());
     assert!(parse(r#"<Deck version="1"><Component name="C"><Use id="r" component="C"/></Component><Slide id="p"><Use id="x" component="C"/></Slide></Deck>"#).is_err());
     assert!(parse(&doc(r#"<Path id="x" d="m 1 2 l 3 4"/>"#)).is_err());
+}
+#[test]
+fn later_declarations_override_shorthands_like_css() {
+    let source = r##"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Style name="pad">padding-top:40px</Style><Slide id="p"><Box id="a" style="padding-top:50px;padding:0;width:100px;height:100px"><Shape id="x" style="width:10px;height:10px;background:#000"/></Box><Box id="b" class="pad" style="padding:0;width:100px;height:100px"><Shape id="y" style="width:10px;height:10px;background-color:#000;background:#FFF"/></Box></Slide></Deck>"##;
+    let (_, _, s, _) = compile(source);
+    let item = |id: &str| s.pages[0].items.iter().find(|i| i.id == id).unwrap();
+    assert_eq!(item("x").rect.y, 0.0);
+    assert_eq!(item("y").rect.y, 100.0);
+    assert_eq!(item("y").fill, Color::WHITE);
+}
+#[test]
+fn many_token_references_are_not_cycles() {
+    let refs = ["var(--p)"; 4].join(" ");
+    let source = format!(
+        r#"<Deck version="1" font-family="DejaVu Sans"><Token name="p" value="1px"/><Slide id="p"><Box id="b" style="padding:{refs};margin:{refs};gap:var(--p);left:var(--p);top:var(--p);width:var(--p);height:var(--p)"/></Slide></Deck>"#
+    );
+    assert!(parse(&source).is_ok());
+    let fan = (0..15)
+        .map(|i| {
+            format!(
+                r#"<Token name="t{}" value="var(--t{i}) var(--t{i})"/>"#,
+                i + 1
+            )
+        })
+        .collect::<String>();
+    let source = format!(
+        r#"<Deck version="1"><Token name="t0" value="1px"/>{fan}<Slide id="p"><Box id="b" style="width:var(--t15)"/></Slide></Deck>"#
+    );
+    assert!(parse(&source).unwrap_err().to_string().contains("64 KiB"));
+}
+#[test]
+fn errors_name_every_failing_element_with_its_position() {
+    let error = parse(&doc(
+        r#"<Text id="a" style="filter:x">A</Text><Box id="ok"><Shape id="b" shape="star"/></Box>"#,
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("line 1, column 88: unsupported CSS property filter"),
+        "{error}"
+    );
+    assert!(
+        error.contains("line 1, column 139: Shape supports"),
+        "{error}"
+    );
+    let d = parse(&doc(
+        r#"<Text id="t" style="width:9px;height:9px;font-weight:700;font-style:italic">X</Text>"#,
+    ))
+    .unwrap();
+    let error = layout(&d, &resources()).unwrap_err().to_string();
+    assert!(
+        error.starts_with("line 1, column 88: font face not supplied"),
+        "{error}"
+    );
+}
+#[test]
+fn declared_font_family_must_be_in_its_file() {
+    let mut r = resources();
+    r.fonts[0].family = Some("Brand".into());
+    let error = layout(&parse(&simple()).unwrap(), &r)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Brand is not in its file; the file provides: DejaVu Sans"),
+        "{error}"
+    );
+}
+#[test]
+fn chart_labels_that_do_not_fit_are_errors() {
+    let d = parse(&doc(
+        r##"<Chart id="c" style="width:300px;height:200px"><Labels>An extremely long category label|B</Labels><Series name="S" color="#2563EB">1 2</Series></Chart>"##,
+    ))
+    .unwrap();
+    let s = layout(&d, &resources()).unwrap();
+    assert!(
+        s.diagnostics
+            .iter()
+            .any(|d| d.code == "chart_label_overflow" && d.node_id == "c/label/0")
+    );
+    assert!(!s.diagnostics.iter().any(|d| d.node_id == "c/label/1"));
 }
 #[test]
 fn missing_fonts_and_glyphs_are_errors() {
