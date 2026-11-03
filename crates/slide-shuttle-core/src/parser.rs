@@ -71,6 +71,18 @@ pub fn parse(source: &str) -> Result<Deck> {
     })
 }
 
+/// Parse a project held in memory, keyed by project-relative path.
+pub fn parse_files(entry: &str, files: &BTreeMap<String, String>) -> Result<Deck> {
+    let source = files
+        .get(entry)
+        .ok_or_else(|| invalid(format!("missing entry file {entry}")))?;
+    parse_project(entry, source, |path| {
+        files
+            .get(path)
+            .cloned()
+            .ok_or_else(|| invalid(format!("missing {path}")))
+    })
+}
 /// Parse an entry file and the libraries and pages it references. `read` receives paths
 /// relative to the entry's directory, already checked to stay inside it.
 pub fn parse_project(

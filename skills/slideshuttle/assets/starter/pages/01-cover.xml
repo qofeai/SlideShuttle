@@ -1,0 +1,22 @@
+<Slide id="cover" background="#0D2A35">
+  <Box id="frame" class="frame" style="gap:24px">
+    <Text id="kicker" class="kicker" style="color:#73D8C2">A CLEAR POINT OF VIEW / 演示编排示例</Text>
+    <Box id="grid" style="display:grid;grid-template-columns:7fr 5fr;gap:48px;height:450px">
+      <Box id="story" style="display:flex;flex-direction:column;justify-content:center;gap:24px">
+        <Text id="title" style="height:184px;font-size:66px;line-height:86px;font-weight:700;color:#F4F1E9">让内容有结构，<br/>让观点被看见。</Text>
+        <Text id="subtitle" style="height:92px;font-size:24px;line-height:38px;color:#B1C7CC">用关系组织内容，用层级引导阅读。<br/>每一页，都推进一次理解。</Text>
+      </Box>
+      <Group id="visual" style="position:relative;height:430px">
+        <Shape id="rail" style="position:absolute;left:8px;top:76px;width:368px;height:262px;background:#254853;border-radius:16px"/>
+        <Shape id="sheet" style="position:absolute;left:28px;top:48px;width:368px;height:262px;background:#F4F1E9;border-radius:16px"/>
+        <Text id="visual-label" style="position:absolute;left:56px;top:72px;width:280px;height:40px;font-size:22px;line-height:34px;font-weight:700;color:#142B36">ONE CLEAR IDEA.</Text>
+        <Shape id="small" style="position:absolute;left:56px;top:210px;width:78px;height:70px;background:#B8DCD2;border-radius:5px"/>
+        <Shape id="medium" style="position:absolute;left:156px;top:168px;width:78px;height:112px;background:#6DBDA8;border-radius:5px"/>
+        <Shape id="large" style="position:absolute;left:256px;top:126px;width:78px;height:154px;background:#087E6D;border-radius:5px"/>
+        <Path id="arrow" d="M 0 54 C 40 54 52 10 110 0 L 94 1 M 110 0 L 107 17" viewBox="110 64" style="position:absolute;left:224px;top:334px;width:150px;height:80px;border:3px solid #73D8C2"/>
+        <Text id="caption" style="position:absolute;left:28px;top:348px;width:220px;height:40px;font-size:18px;line-height:30px;color:#73D8C2">层级，让重点自然出现。</Text>
+      </Group>
+    </Box>
+    <Text id="footer" style="height:36px;font-size:16px;line-height:26px;color:#86A5AF">结构范例，可替换全部内容、颜色与构图。图形不代表任何真实数据。</Text>
+  </Box>
+</Slide>

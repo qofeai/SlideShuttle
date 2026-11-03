@@ -48,7 +48,7 @@ export class RendererClient {
     });
   }
   open(payload, transfer = []) { const revision = ++this.revision; return this.request('load', payload, transfer, revision); }
-  compile(source, fontFallback) { const revision = ++this.revision; return this.request('compile', { source, fontFallback }, [], revision); }
+  compile(project, fontFallback) { const revision = ++this.revision; return this.request('compile', { project, fontFallback }, [], revision); }
   renderPage(page, scale = 1) { return this.request('page', { page, scale }); }
   exportPdf() { return this.request('pdf'); }
   exportPptx() { return this.request('pptx'); }

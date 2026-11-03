@@ -27,12 +27,25 @@ python3 scripts/build.py --doctor
 
 写入独立的文稿工作目录，使用语义稳定的 ID。先读 [语言与排版约定](references/authoring.md)；以运行时报告的 `languageDoc` 核对需要的高级属性。只有支持的 XML/CSS 子集能编译，浏览器/React 的任意属性不能直接搬过来。
 
-[assets/starter.xml](assets/starter.xml) 是经过渲染验证的五页结构示例，包含不同构图、原生图表和可复用组件。仅在能节省重复工作时复制；可以更换全部主题、页序、组件与布局，不把它当作固定模板。
+多页稿按项目组织：
+
+```
+deck/
+  deck.xml          # 入口：尺寸、字体、<Library src>、按顺序的 <Slide src>
+  design.xml        # <Library>：全稿共享的 Token / Style / Component
+  pages/01-cover.xml
+  pages/02-market.xml
+  media/
+```
+
+先定页序、每页论点和共享设计（入口 + `design.xml`），再写页面。页面文件只放该页内容，元素 ID 只需页内唯一，所以各页可以分别撰写；能并行时把每页交给一个子 Agent，交代该页论点、可用的 Style/Component 和数据来源，让它只改自己的页面文件，并用 `slide-shuttle check deck.xml --page <slide id>` 自检。共享库只由一个 Agent 修改；改动 Token/Style/Component 后要复核所有使用它的页面。页序只看入口，调整顺序改入口，不重命名文件。
+
+[assets/starter/](assets/starter/deck.xml) 是经过渲染验证的五页项目示例，包含不同构图、原生图表和可复用组件。仅在能节省重复工作时复制；可以更换全部主题、页序、组件与布局，不把它当作固定模板。
 
 ## 编译、看图、修改
 
 ```bash
-python3 scripts/build.py /path/to/deck.xml --out /path/to/output/v1
+python3 scripts/build.py /path/to/deck/deck.xml --out /path/to/output/v1
 ```
 
 输出包含 `presentation.pptx`、`preview/deck.pdf`、逐页 PNG、`index.html`、检查与构建记录。若安装了 Pillow，还会生成 `contact-sheet.png`。输出目录须是新路径；改稿用 `v2` 等新目录，不覆盖已审阅的产物。

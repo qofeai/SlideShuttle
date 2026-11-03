@@ -20,7 +20,7 @@
   #slide{width:100%;height:100%;object-fit:contain}#placeholder{padding:32px;text-align:center;color:#758b98}
   #page-label{display:inline-block;min-width:82px;text-align:center;font-variant-numeric:tabular-nums}
   details{margin-top:18px}summary{cursor:pointer;color:#536b78;font-size:13px}
-  textarea{display:block;width:100%;height:280px;margin:12px 0;padding:14px;border:1px solid #c3d2dc;border-radius:8px;background:#fff;font:12px/1.5 monospace}
+  select{display:block;width:100%;margin-top:12px;font:13px monospace}textarea{display:block;width:100%;height:280px;margin:12px 0;padding:14px;border:1px solid #c3d2dc;border-radius:8px;background:#fff;font:12px/1.5 monospace}
   pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 monospace}#losses{background:#fff8df;border:1px solid #e9d999;padding:14px 18px;border-radius:8px;margin:16px 0}
   #font-notice{background:#fff8df;border:1px solid #e9d999;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:13px}
   #filename{color:#617885;font-size:13px;overflow:hidden;text-overflow:ellipsis;max-width:260px;white-space:nowrap}
@@ -31,6 +31,8 @@
 <div class="app">
   <aside>
     <label>演示文稿（不选则打开中文示例）<input id="source" type="file" accept=".xml,.pptx"></label>
+    <label>或打开项目文件夹<input id="folder" type="file" webkitdirectory aria-describedby="folder-help"></label>
+    <p id="folder-help" class="note">文件夹内的 deck.xml 为入口；页面、共享库、图片和字体按相对路径读取。</p>
     <p class="note">已内置中文常规、粗体字体，可以直接打开。首次预览会加载约 38 MiB 字体。</p>
     <details id="resources-panel"><summary>字体与图片（可选）</summary>
       <label>补充字体文件<input id="fonts" type="file" multiple accept=".ttf,.otf,.ttc" aria-describedby="font-help"></label>
@@ -53,7 +55,7 @@
     <p id="pptx-note" class="note" hidden>导入稿提供重建预览和 PNG/PDF；PPTX 再导出请使用 CLI 检查差异与损失。</p>
     <p id="font-notice" role="status" hidden></p>
     <div id="losses" hidden><span id="loss-summary"></span><details><summary>查看重建限制</summary><pre id="loss-detail"></pre></details></div>
-    <details id="source-panel"><summary>查看与调整源文档</summary><textarea id="xml" spellcheck="false" aria-label="演示文稿 XML"></textarea><button id="recompile" disabled>重新排版</button></details>
+    <details id="source-panel"><summary>查看与调整源文档</summary><select id="file" aria-label="源文件"></select><textarea id="xml" spellcheck="false" aria-label="演示文稿 XML"></textarea><button id="recompile" disabled>重新排版</button></details>
     <details><summary>诊断信息</summary><pre id="diagnostics"></pre></details>
   </main>
 </div>

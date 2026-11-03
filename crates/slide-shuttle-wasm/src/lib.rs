@@ -96,6 +96,25 @@ impl Engine {
             document: self.document(source)?,
         })
     }
+    /// Compile a multi-file project. `files_json` is a JSON object from project-relative
+    /// path to source text; `entry` names the `<Deck>` file.
+    #[wasm_bindgen(js_name=compileProject)]
+    pub fn compile_project(
+        &mut self,
+        entry: &str,
+        files_json: &str,
+    ) -> std::result::Result<CompiledDeck, JsValue> {
+        if files_json.len() > 64 * 1024 * 1024 {
+            return Err(js("project sources exceed 64 MiB"));
+        }
+        let key = format!("{entry}\0{files_json}");
+        let document = self.cached_or(key, |compiler| {
+            let files: std::collections::BTreeMap<String, String> =
+                serde_json::from_str(files_json)?;
+            compiler.compile_deck(parse_files(entry, &files)?)
+        })?;
+        Ok(CompiledDeck { document })
+    }
     /// Optional, reported preview substitutions. The default remains strict.
     #[wasm_bindgen(js_name=setFontFallback)]
     pub fn set_font_fallback(
@@ -161,7 +180,7 @@ impl Engine {
             .sum::<usize>();
         self.budget(added, replaced)?;
         let result = serde_json::to_string(
-            &serde_json::json!({"source":imported.xml,"snapshot":imported.snapshot}),
+            &serde_json::json!({"entry":"deck.xml","files":imported.files,"snapshot":imported.snapshot}),
         )
         .map_err(js)?;
         self.invalidate();
@@ -196,16 +215,24 @@ impl Engine {
         Ok(self.compiler.as_mut().unwrap())
     }
     fn document(&mut self, source: &str) -> std::result::Result<Arc<CompiledDocument>, JsValue> {
+        self.cached_or(source.into(), |compiler| compiler.compile(source))
+    }
+    /// One cached compilation, keyed by everything that was compiled.
+    fn cached_or(
+        &mut self,
+        key: String,
+        compile: impl FnOnce(&mut Compiler) -> Result<CompiledDocument>,
+    ) -> std::result::Result<Arc<CompiledDocument>, JsValue> {
         if let Some((cached, doc)) = &self.cached
-            && cached == source
+            && *cached == key
         {
             self.cache_hits += 1;
             return Ok(doc.clone());
         }
         self.cached = None;
-        let document = Arc::new(self.compiler()?.compile(source).map_err(js)?);
+        let document = Arc::new(compile(self.compiler()?).map_err(js)?);
         self.compilations += 1;
-        self.cached = Some((source.into(), document.clone()));
+        self.cached = Some((key, document.clone()));
         Ok(document)
     }
     fn budget(&self, extra: usize, replaced: usize) -> std::result::Result<(), JsValue> {

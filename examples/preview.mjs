@@ -13,6 +13,9 @@ let imageUrl;
 let currentPng;
 let documentDiagnostics = [];
 let fontLoadController;
+/** Sources being previewed: entry path plus every project file, edited one file at a time. */
+let project = { entry: 'demo.xml', files: {} };
+let currentFile = 'demo.xml';
 const client = new RendererClient({ onProgress: text => { $('status').textContent = text; } });
 
 function controls() {
@@ -50,10 +53,20 @@ function showError(error, operation) {
   $('status').textContent = error.message || String(error);
   if (error.diagnostics) $('diagnostics').textContent = JSON.stringify(error.diagnostics, null, 2);
 }
+function showProject(next, file = next.entry) {
+  project = next; currentFile = file in next.files ? file : next.entry;
+  const names = [next.entry, ...Object.keys(next.files).filter(name => name !== next.entry).sort()];
+  $('file').replaceChildren(...names.map(name => new Option(name, name, false, name === currentFile)));
+  $('file').hidden = names.length < 2;
+  $('xml').value = next.files[currentFile] ?? '';
+}
+function editedProject() {
+  return { entry: project.entry, files: { ...project.files, [currentFile]: $('xml').value } };
+}
 function applyDocument(result) {
   hasResources = true;
   pages = result.report.pageCount; page = 0; imported = result.imported;
-  $('xml').value = result.source;
+  showProject(result.project, currentFile);
   documentDiagnostics = result.report.diagnostics;
   const substitutions = documentDiagnostics.filter(d => d.code === 'font_substitution');
   if (substitutions.length) {
@@ -105,37 +118,65 @@ function save(bytes, mime, name) {
 function selectionChanged() {
   controls();
   if (busy || !workerReady) return;
-  const filename = $('source').files[0]?.name || '中文示例';
+  const filename = $('filename').textContent;
   $('status').textContent = `已选择 ${filename}，可以直接打开。${$('fonts').files.length ? `将加载 ${$('fonts').files.length} 个补充字体文件。` : '已提供内置中文字体。'}`;
 }
 $('fonts').onchange = selectionChanged;
-$('source').onchange = () => { $('filename').textContent = $('source').files[0]?.name || '中文示例'; selectionChanged(); };
+$('source').onchange = () => { $('folder').value = ''; $('filename').textContent = $('source').files[0]?.name || '中文示例'; selectionChanged(); };
+$('folder').onchange = () => {
+  $('source').value = '';
+  $('filename').textContent = $('folder').files[0]?.webkitRelativePath.split('/')[0] || '中文示例';
+  selectionChanged();
+};
+$('xml').oninput = () => { project.files[currentFile] = $('xml').value; };
+$('file').onchange = () => { project.files[currentFile] = $('xml').value; showProject(project, $('file').value); };
+/** Split a selected folder into sources, images and fonts keyed by path inside the folder. */
+async function folderProject(files) {
+  const inside = file => file.webkitRelativePath.split('/').slice(1).join('/');
+  const sources = {}; const images = []; const fonts = [];
+  for (const file of files) {
+    const name = inside(file);
+    if (/\.xml$/i.test(name)) {
+      if (file.size > 4 * 1024 * 1024) throw new Error(`源文件 ${name} 超过 4 MiB。`);
+      sources[name] = await file.text();
+    } else if (/\.(png|jpe?g)$/i.test(name)) images.push({ name, bytes: await file.arrayBuffer() });
+    else if (/\.(ttf|otf|ttc)$/i.test(name)) fonts.push({ name, bytes: await file.arrayBuffer() });
+  }
+  const entry = 'deck.xml' in sources ? 'deck.xml' : Object.keys(sources).find(name => !name.includes('/') && /^\s*(<\?xml[^>]*>\s*)?<Deck[\s>]/.test(sources[name]));
+  if (!entry) throw new Error('文件夹中没有 deck.xml 或根元素为 <Deck> 的入口文件。');
+  return { project: { entry, files: sources }, images, fonts };
+}
 $('run').onclick = async () => {
   const operation = ++operationId;
   hasResources = false;
   const controller = fontLoadController = new AbortController();
   setBusy(true); clearDocument(); document.body.dataset.state = 'loading';
   try {
+    const folder = $('folder').files.length ? await folderProject([...$('folder').files]) : undefined;
     const resourceFiles = [...$('fonts').files, ...$('images').files];
     if (resourceFiles.length > 510 || resourceFiles.reduce((n, f) => n + f.size, BUILTIN_FONT_BYTES) > 256 * 1024 * 1024) throw new Error('字体与图片（含内置字体）合计超过 256 MiB 或 512 个文件。');
     $('status').textContent = '正在加载内置中文字体（首次约 38 MiB）…';
     const defaults = await loadBuiltinFonts(controller.signal);
-    const fonts = [...await selectedFiles($('fonts'), 64 * 1024 * 1024, '字体'), ...defaults];
-    const images = await selectedFiles($('images'), 32 * 1024 * 1024, '图片');
+    const fonts = [...await selectedFiles($('fonts'), 64 * 1024 * 1024, '字体'), ...(folder?.fonts ?? []), ...defaults];
+    const images = [...await selectedFiles($('images'), 32 * 1024 * 1024, '图片'), ...(folder?.images ?? [])];
     if (new Set(images.map(i => i.name)).size !== images.length) throw new Error('图片文件名重复，请使用唯一名称。');
     if (fonts.concat(images).reduce((n, f) => n + f.bytes.byteLength, 0) > 256 * 1024 * 1024) throw new Error('字体与图片合计超过 256 MiB。');
-    const sourceFile = $('source').files[0];
+    const sourceFile = folder ? undefined : $('source').files[0];
     const kind = sourceFile?.name.toLowerCase().endsWith('.pptx') ? 'pptx' : 'xml';
     if (sourceFile && !/\.(pptx|xml)$/i.test(sourceFile.name)) throw new Error('请选择 XML 或 PPTX 演示文稿。');
     if (sourceFile && sourceFile.size > (kind === 'pptx' ? 64 : 4) * 1024 * 1024) throw new Error('演示文稿超过大小限制。');
     const bytes = kind === 'pptx' ? await sourceFile.arrayBuffer() : undefined;
-    const source = kind === 'xml' ? (sourceFile ? await sourceFile.text() : $('xml').value) : undefined;
-    if (kind === 'xml') $('xml').value = source;
+    if (kind === 'xml') {
+      if (folder) showProject(folder.project);
+      else if (sourceFile) showProject({ entry: sourceFile.name, files: { [sourceFile.name]: await sourceFile.text() } });
+      else showProject(editedProject(), currentFile);
+    }
+    const sources = kind === 'xml' ? editedProject() : undefined;
     if (operation !== operationId) return;
     const transfer = fonts.concat(images).map(file => file.bytes);
     if (bytes) transfer.push(bytes);
     const fontFallback = $('font-fallback').checked ? BUILTIN_FONT_FAMILY : undefined;
-    const result = await client.open({ fonts, images, kind, bytes, source, fontFallback }, transfer);
+    const result = await client.open({ fonts, images, kind, bytes, project: sources, fontFallback }, transfer);
     if (operation !== operationId) return;
     applyDocument(result);
     await showPage(0, operation);
@@ -144,10 +185,10 @@ $('run').onclick = async () => {
 };
 $('recompile').onclick = async () => {
   const operation = ++operationId;
-  const source = $('xml').value;
+  const sources = editedProject();
   setBusy(true); clearDocument(); document.body.dataset.state = 'loading';
   try {
-    const result = await client.compile(source, $('font-fallback').checked ? BUILTIN_FONT_FAMILY : undefined);
+    const result = await client.compile(sources, $('font-fallback').checked ? BUILTIN_FONT_FAMILY : undefined);
     if (operation !== operationId) return;
     applyDocument(result); await showPage(0, operation);
   } catch (error) { showError(error, operation); }
@@ -176,7 +217,7 @@ for (const [id, method, mime, suffix] of [['pdf', 'exportPdf', 'application/pdf'
 try {
   const response = await fetch('./demo.xml');
   if (!response.ok) throw new Error('无法加载中文示例。');
-  $('xml').value = await response.text();
+  showProject({ entry: 'demo.xml', files: { 'demo.xml': await response.text() } });
   await client.ready; workerReady = true;
   selectionChanged();
 } catch (error) { $('status').textContent = error.message || String(error); }

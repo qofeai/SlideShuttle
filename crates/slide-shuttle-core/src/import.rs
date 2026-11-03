@@ -50,7 +50,8 @@ pub struct Snapshot {
     pub losses: Vec<Loss>,
 }
 pub struct Imported {
-    pub xml: String,
+    /// Project sources: `deck.xml` plus one `pages/<slide id>.xml` per slide.
+    pub files: BTreeMap<String, String>,
     pub assets: BTreeMap<String, Vec<u8>>,
     pub snapshot: Snapshot,
 }
@@ -497,10 +498,13 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
                 reason,
             });
         }
-        slides.push(format!(
-            "<Slide id=\"{page}\" background=\"{}\">{}</Slide>",
-            xml(&bg),
-            reader.nodes.join("")
+        slides.push((
+            page.clone(),
+            format!(
+                "<Slide id=\"{page}\" background=\"{}\">{}</Slide>",
+                xml(&bg),
+                reader.nodes.join("")
+            ),
         ));
     }
     for reason in default_text_problems {
@@ -570,9 +574,18 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         .keys()
         .map(|p| format!("<Asset id=\"{}\" src=\"{}\"/>", xml(p), xml(p)))
         .collect::<String>();
-    let xml = format!(
-        "<Deck title=\"Imported presentation\" width=\"{width}emu\" height=\"{height}emu\" font-family=\"Noto Sans CJK SC\">{asset_xml}{}</Deck>",
-        slides.join("")
+    let mut files = BTreeMap::new();
+    let mut pages_xml = String::new();
+    for (id, slide) in slides {
+        let path = format!("pages/{id}.xml");
+        pages_xml.push_str(&format!("<Slide src=\"{path}\"/>"));
+        files.insert(path, slide);
+    }
+    files.insert(
+        "deck.xml".into(),
+        format!(
+            "<Deck title=\"Imported presentation\" width=\"{width}emu\" height=\"{height}emu\" font-family=\"Noto Sans CJK SC\">{asset_xml}{pages_xml}</Deck>"
+        ),
     );
     let snapshot = Snapshot {
         version: 1,
@@ -586,7 +599,7 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         losses: reader.losses,
     };
     Ok(Imported {
-        xml,
+        files,
         assets: reader.assets,
         snapshot,
     })

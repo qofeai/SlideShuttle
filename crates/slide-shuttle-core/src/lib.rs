@@ -12,4 +12,4 @@ mod text;
 pub use compiler::{CompiledDocument, Compiler, RenderStats, TextMeasurement};
 pub use layout::layout;
 pub use model::*;
-pub use parser::{parse, parse_project};
+pub use parser::{parse, parse_files, parse_project};

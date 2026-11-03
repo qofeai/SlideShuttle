@@ -27,7 +27,7 @@ self.onmessage = async ({ data: message }) => {
     if (type === 'load' || type === 'compile') {
       activeRevision = revision;
       releaseDocument();
-      let source = payload.source;
+      let project = payload.project;
       if (type === 'load') {
         resourcesLoaded = false;
         engine.clear();
@@ -40,22 +40,22 @@ self.onmessage = async ({ data: message }) => {
         if (imported) {
           progress(id, revision, '正在读取演示文稿…');
           const result = JSON.parse(engine.importPptx(new Uint8Array(payload.bytes)));
-          source = result.source;
+          project = { entry: result.entry, files: result.files };
           importLosses = result.snapshot.losses;
         }
       }
       engine.setFontFallback(payload.fontFallback);
       progress(id, revision, '正在排版…');
-      const next = engine.compile(source);
+      const next = engine.compileProject(project.entry, JSON.stringify(project.files));
       const report = JSON.parse(next.inspect());
       if (!report.valid) {
         next.free();
-        const error = new Error(report.diagnostics.filter(d => d.severity === 'error').map(d => `${d.nodeId}: ${d.message}`).join('\n'));
+        const error = new Error(report.diagnostics.filter(d => d.severity === 'error').map(d => `${d.source?.file ? `${d.source.file} · ` : ''}${d.page}/${d.nodeId}: ${d.message}`).join('\n'));
         error.diagnostics = report.diagnostics;
         throw error;
       }
       document = next;
-      self.postMessage({ type: 'result', id, revision, value: { source, imported, losses: importLosses, report, stats: JSON.parse(engine.stats()) } });
+      self.postMessage({ type: 'result', id, revision, value: { project, imported, losses: importLosses, report, stats: JSON.parse(engine.stats()) } });
       return;
     }
     if (revision !== activeRevision) throw new Error('文档已更新，请重试。');

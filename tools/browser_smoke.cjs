@@ -153,6 +153,20 @@ async function main() {
     const imagePage = await download('png');
     assert(imagePage.equals(fs.readFileSync(path.join(root, 'examples/output/components-native/slide-002.png'))), 'image asset aliases and fit modes should render identically in browser and native');
 
+    await page.locator('#folder').setInputFiles(path.join(root, 'examples/project'));
+    await page.click('#run'); await ready();
+    assert.equal(await page.locator('#page-label').textContent(), '1 / 3');
+    assert((await download('png')).equals(fs.readFileSync(path.join(root, 'examples/output/project-native/slide-001.png'))), 'a folder project should render like the native CLI');
+    await page.locator('#source-panel').evaluate(element => element.open = true);
+    assert.equal(await page.locator('#file option').count(), 5, 'the editor should list the entry, library and every page file');
+    await page.locator('#file').selectOption('pages/02-principles.xml');
+    const principles = await page.locator('#xml').inputValue();
+    assert(principles.startsWith('<Slide id="principles"'), 'switching files should show that file');
+    await page.locator('#xml').fill(principles.replace('background="#EFF5F3"', 'background="#FFF7E6"'));
+    await page.click('#recompile'); await ready();
+    assert.equal(await page.locator('#page-label').textContent(), '1 / 3', 'editing one page file recompiles the whole project');
+    await page.locator('#source-panel').evaluate(element => element.open = false);
+
     assert.equal(fontRequests.length, 2, 'opening another document or replacing the Worker must reuse the built-in font bytes');
     const report = { engineVersion: execFileSync(path.join(root, 'target/debug/slide-shuttle'), ['--version'], { encoding: 'utf8' }).trim(), browser: browser.version(), worker: true, builtinFontsAutomatic: true, builtinFontDownloads: fontRequests.length, sourceFileOnlyPreview: true, fontSubstitutionsVisible: true, strictFontMode: true, customFontsSupported: true, nativePngByteMatch: true, imageAssetNativeByteMatch: true, pageCacheHits: 1, pageNavigationCompileCount: 1, fontBuildsAfterSourceEditAndRecovery: 1, invalidSourceClearsPreview: true, warningsRemainVisible: true, importedPptxPreview: true, emptyTextPptxPreview: true, themeStylePptxPreview: true, themeOracleByteMatchPages: 3, themeImportLosses: 0, importLossesVisible: true, importedPptxReexportGuarded: true, cancelAndReload: true, firstLoadMs, responsiveTicks, pdfBytes: pdf.length, pptxBytes: pptx.length, pageErrors: errors, externalRequests };
     assert.deepEqual(errors, []); assert.deepEqual(externalRequests, []);

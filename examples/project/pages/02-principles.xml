@@ -1,0 +1,13 @@
+<Slide id="principles" background="#EFF5F3">
+  <Box id="frame" class="frame">
+    <Text id="label" style="height:28px;font-size:16px;line-height:26px;color:var(--accent)">DESIGN PRINCIPLES / 设计原则</Text>
+    <Text id="title" class="title" style="height:66px">让 Agent 表达意图，让引擎确定布局。</Text>
+    <Text id="intro" class="body" style="height:76px">保留网页编排的组合能力，把演示文稿需要的尺寸、字体与可编辑性变成明确约束。</Text>
+    <Box id="cards" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;height:250px">
+      <Use id="intent" component="Principle" number="01 / COMPOSE" heading="组合，而非堆坐标" copy="用容器、间距、对齐与组件描述关系，让内容变化带动布局。"/>
+      <Use id="render" component="Principle" number="02 / RESOLVE" heading="中文原生排版" copy="显式提供字体，统一文字整形和几何，再输出 PNG 与 PDF。"/>
+      <Use id="native" component="Principle" number="03 / EDIT" heading="保留原生对象" copy="文字、形状、表格和数据图表，作为真实对象进入 PPTX。"/>
+    </Box>
+    <Text id="note" style="height:62px;font-size:18px;line-height:30px;color:#6C8290">格式独立设计。导入采用有限重建，不能表达的内容进入明确的损失清单。</Text>
+  </Box>
+</Slide>

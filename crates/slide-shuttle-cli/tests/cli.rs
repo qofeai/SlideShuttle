@@ -143,10 +143,11 @@ fn import_rebuild_requires_specific_current_decisions() {
     let receipt = fs::read_to_string(p.join("rebuilt.pptx.receipt.json")).unwrap();
     assert!(!receipt.contains("Original body"));
     assert!(!receipt.contains("\"changes\""));
-    let source = fs::read_to_string(p.join("imported/deck.xml"))
+    let page = p.join("imported/pages/page-1.xml");
+    let source = fs::read_to_string(&page)
         .unwrap()
         .replace("Original body", "Changed body");
-    fs::write(p.join("imported/deck.xml"), source).unwrap();
+    fs::write(page, source).unwrap();
     assert!(
         !run(
             p,
