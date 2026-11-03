@@ -127,7 +127,7 @@ python3 -m http.server 8088 --bind 127.0.0.1 --directory examples
 
 预览器默认使用内置字体替代未提供的字体/样式，并显示提示；不修改源编辑器中的字体声明。可在“字体与图片”中补充原字体，或关闭替代恢复严格检查。字体替代会影响文字宽度与换行，不保证原稿外观。核心/CLI 与默认 WASM API 仍严格检查字体；宿主可显式用 `Engine.setFontFallback('Noto Sans CJK SC')` 开启替代，用 `undefined` 关闭。
 
-PPTX 导入是支持对象的重建预览；页面保留损失提示，导入稿的 PPTX 重建需走 CLI 的差异与损失决策。WASM 底层 API 的基线持久化和决策仍由宿主负责。Chromium 已实际测试，Firefox/Safari 和大文稿压测尚未完成。API、文字测量和完整复现步骤见 [渲染说明](docs/RENDERING-0.2.0.md)。
+PPTX 导入是支持对象的重建预览；页面保留损失提示，导入稿的 PPTX 重建需走 CLI 的差异与损失决策。WASM 底层 API 的基线持久化和决策仍由宿主负责。Chromium 已实际测试，Firefox/Safari 和大文稿压测尚未完成。API、文字测量和完整复现步骤见 [渲染说明](docs/RENDERING.md)。
 
 ## 验证
 
@@ -140,11 +140,13 @@ node --test tools/*.test.mjs
 python3 -m unittest discover -s benchmarks -p 'test_*.py'
 ```
 
+模糊测试需要 nightly 与 `cargo install cargo-fuzz`，在 `fuzz/` 下运行 `cargo fuzz run source`（或 `pptx`、`slide`）；CI 每周定时运行一次。
+
 独立文件校验脚本见 [verify_outputs.py](tools/verify_outputs.py)，WASM 运行冒烟脚本见 [wasm_smoke.cjs](tools/wasm_smoke.cjs)，真实浏览器检查见 [browser_smoke.cjs](tools/browser_smoke.cjs)。CI 已配置实际 Chromium + Worker + WASM 检查；本地执行结果与远程 CI 运行分开记录。测试字体与许可在 `crates/slide-shuttle-core/tests/fonts`。依赖来源、已验证事项和剩余验收项记录在 [STATUS.md](docs/STATUS.md)。
 
 公开任务的实际生成、一次修复、独立 PPTX 渲染和指标结果见 [SlidesBench / SlidesGen 首轮实测](docs/BENCHMARK-2026-11-02.md)，输入准备与评测脚本位于 [benchmarks](benchmarks/README.md)。
 
-0.3.0 新增主题色、透明度和默认文字样式继承的导入解析，范围与独立渲染结果见 [OOXML 导入说明](docs/OOXML-IMPORT-0.3.0.md)。
+0.3.0 新增主题色、透明度和默认文字样式继承的导入解析，范围与独立渲染结果见 [OOXML 导入说明](docs/OOXML-IMPORT.md)。
 
 ## 创作 Skill
 

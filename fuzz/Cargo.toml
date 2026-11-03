@@ -1,0 +1,39 @@
+[package]
+name = "slide-shuttle-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Built only by cargo-fuzz on nightly; kept out of the main workspace.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+zip = { version = "3", default-features = false, features = ["deflate"] }
+
+[dependencies.slide-shuttle-core]
+path = "../crates/slide-shuttle-core"
+
+[[bin]]
+name = "source"
+path = "fuzz_targets/source.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pptx"
+path = "fuzz_targets/pptx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "slide"
+path = "fuzz_targets/slide.rs"
+test = false
+doc = false
+bench = false
