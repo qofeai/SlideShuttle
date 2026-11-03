@@ -197,7 +197,8 @@ pub struct Diagnostic {
 }
 #[derive(Clone, Debug)]
 pub struct PositionedGlyph {
-    pub font_key: String,
+    /// Index into `Resources::fonts` of the file that was shaped against.
+    pub font: usize,
     pub font_index: u32,
     pub glyph_id: u16,
     pub size: f32,

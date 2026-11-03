@@ -165,7 +165,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
         "slideMasters/slideMaster1.xml".into(),
     )];
     let mut slides = String::new();
-    let (mut image_count, mut chart_count) = (0usize, 0usize);
+    let (mut media, mut chart_count) = (Media::new(), 0usize);
     for (index, page) in scene.pages.iter().enumerate() {
         let n = index + 1;
         let mut rels = vec![(
@@ -191,7 +191,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                         &mut pkg,
                         &mut rels,
                         resources,
-                        &mut image_count,
+                        &mut media,
                         &mut chart_count,
                     )?);
                 }
@@ -206,7 +206,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                         &mut pkg,
                         &mut rels,
                         resources,
-                        &mut image_count,
+                        &mut media,
                         &mut chart_count,
                     )?);
                 }
@@ -218,7 +218,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                     &mut pkg,
                     &mut rels,
                     resources,
-                    &mut image_count,
+                    &mut media,
                     &mut chart_count,
                 )?);
             }
@@ -257,6 +257,32 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
     pkg.finish()
 }
 
+/// Resource key -> (media part name, pixel width, pixel height); one part per image.
+type Media = BTreeMap<String, (String, u32, u32)>;
+/// Keep the original PNG/JPEG bytes unless an EXIF rotation would make viewers that
+/// honour it disagree with our unrotated pixels. Decoding also validates the image.
+fn media_part(bytes: &[u8]) -> Result<(Vec<u8>, &'static str, u32, u32)> {
+    use image::{ImageDecoder, ImageFormat, metadata::Orientation};
+    let reader = crate::render::image_reader(bytes)?;
+    let format = reader.format();
+    let mut decoder = reader.into_decoder().map_err(|e| invalid(e.to_string()))?;
+    let upright =
+        decoder.orientation().map_err(|e| invalid(e.to_string()))? == Orientation::NoTransforms;
+    let image = image::DynamicImage::from_decoder(decoder)
+        .map_err(|e| invalid(format!("invalid or excessive image: {e}")))?;
+    let (width, height) = (image.width(), image.height());
+    Ok(match format {
+        Some(ImageFormat::Png) if upright => (bytes.to_vec(), "png", width, height),
+        Some(ImageFormat::Jpeg) if upright => (bytes.to_vec(), "jpeg", width, height),
+        _ => {
+            let mut data = Cursor::new(Vec::new());
+            image
+                .write_to(&mut data, ImageFormat::Png)
+                .map_err(|e| invalid(e.to_string()))?;
+            (data.into_inner(), "png", width, height)
+        }
+    })
+}
 #[allow(clippy::too_many_arguments)]
 fn write_item(
     item: &Item,
@@ -264,7 +290,7 @@ fn write_item(
     pkg: &mut Package,
     rels: &mut Vec<(String, String, String)>,
     resources: &Resources,
-    image_count: &mut usize,
+    media: &mut Media,
     chart_count: &mut usize,
 ) -> Result<String> {
     if matches!(item.kind, Draw::Box) && item.fill.3 == 0 && item.stroke_width <= 0.0 {
@@ -289,36 +315,30 @@ fn write_item(
                 .images
                 .get(src)
                 .ok_or_else(|| invalid("missing PPTX image resource"))?;
-            let decoded = crate::render::decode_image(bytes)?;
-            *image_count += 1;
-            let name = format!("image{}.png", image_count);
-            let rel = format!("rImage{image_count}");
-            let mut data = Cursor::new(Vec::new());
-            image::DynamicImage::ImageRgba8(decoded.clone())
-                .write_to(&mut data, image::ImageFormat::Png)
-                .map_err(|e| invalid(e.to_string()))?;
-            pkg.bytes(&format!("ppt/media/{name}"), data.into_inner(), "image/png");
+            if !media.contains_key(src) {
+                let (bytes, extension, width, height) = media_part(bytes)?;
+                let name = format!("image{}.{extension}", media.len() + 1);
+                pkg.bytes(
+                    &format!("ppt/media/{name}"),
+                    bytes,
+                    &format!("image/{extension}"),
+                );
+                media.insert(src.clone(), (name, width, height));
+            }
+            let (name, width, height) = &media[src];
+            let rel = format!("rImage{}", rels.len());
             rels.push((
                 rel.clone(),
                 format!("{R}/image"),
                 format!("../media/{name}"),
             ));
+            let (width, height) = (*width as f32, *height as f32);
             let (mut rect, mut crop) = (item.rect, String::new());
             if fit == "contain" {
-                rect = crate::render::image_rect(
-                    rect,
-                    decoded.width() as f32,
-                    decoded.height() as f32,
-                    fit,
-                );
+                rect = crate::render::image_rect(rect, width, height, fit);
             }
             if fit == "cover" {
-                let ir = crate::render::image_rect(
-                    rect,
-                    decoded.width() as f32,
-                    decoded.height() as f32,
-                    fit,
-                );
+                let ir = crate::render::image_rect(rect, width, height, fit);
                 let l = ((rect.x - ir.x) / ir.width * 100000.0).round() as i64;
                 let t = ((rect.y - ir.y) / ir.height * 100000.0).round() as i64;
                 crop = format!("<a:srcRect l=\"{l}\" r=\"{l}\" t=\"{t}\" b=\"{t}\"/>");
