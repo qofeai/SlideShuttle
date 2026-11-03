@@ -128,6 +128,46 @@ impl<'i> Theme<'i> {
         };
         self.color(color, placeholder, problems)
     }
+    /// A DrawingML gradient as CSS; `None` with a problem when it cannot be expressed.
+    pub fn gradient(&self, grad: X<'_, '_>, problems: &mut Problems) -> Option<String> {
+        let mut stops = Vec::new();
+        for gs in child_elements(grad, "gsLst").into_iter().flatten() {
+            let at = gs.attribute("pos").and_then(|v| v.parse::<f64>().ok())? / 1000.0;
+            let color = self.color_child(gs, None, problems)?;
+            stops.push((at, color));
+        }
+        stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if !(2..=8).contains(&stops.len()) {
+            problems.insert(
+                "gradient with fewer than 2 or more than 8 stops is not reconstructed".into(),
+            );
+            return None;
+        }
+        let stops = stops
+            .iter()
+            .map(|(at, c)| format!("#{} {}%", color_hex(*c), (at * 100.0).round() / 100.0))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let path = grad.children().find(|n| n.has_tag_name((A, "path")));
+        if let Some(path) = path {
+            if path.attribute("path") != Some("circle") {
+                problems.insert("shape and rectangle path gradients are drawn as circles".into());
+            }
+            return Some(format!("radial-gradient({stops})"));
+        }
+        let ang = grad
+            .children()
+            .find(|n| n.has_tag_name((A, "lin")))
+            .and_then(|n| n.attribute("ang"))
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            / 60000.0;
+        // DrawingML measures from "to right", CSS from "to top".
+        Some(format!(
+            "linear-gradient({}deg, {stops})",
+            ((ang + 90.0) % 360.0 * 100.0).round() / 100.0
+        ))
+    }
     pub fn fill(
         &self,
         n: X<'_, '_>,
@@ -415,4 +455,9 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> [f64; 3] {
         _ => [c, 0.0, x],
     };
     p.map(|v| v + m)
+}
+
+fn child_elements<'a, 'i>(n: X<'a, 'i>, name: &str) -> Option<Vec<X<'a, 'i>>> {
+    let list = n.children().find(|c| c.tag_name().name() == name)?;
+    Some(list.children().filter(|c| c.is_element()).collect())
 }

@@ -30,7 +30,8 @@ Slide 使用全稿唯一、稳定的 ASCII 语义 ID；普通节点只需在本�
 | 图片 | PNG/JPEG、contain/cover/fill；src 为工程内路径或 Asset ID，圆角/边框放外层盒子，但图片本身不裁圆角 |
 | 矢量图形 | rect/ellipse/line；Path 仅绝对 M/L/C/Z，viewBox="100 100" 是逻辑宽高 |
 | 数据 | Chart 仅 bar/line；Labels 用竖线分隔；Series 内空格分隔有限数值；Table 为矩形纯文字单元格 |
-| 填充 | 纯色/RGBA 或两个不透明色标的左右/上下线性渐变 |
+| 填充 | 纯色/RGBA、任意角度线性渐变或径向渐变（2–8 色标）；页面背景还可用 `url(图片)` |
+| 质感 | `box-shadow` 单个外阴影；`border-style:dashed/dotted`；线条/Path 的 `marker-end:arrow` 等箭头；`transform:rotate()` 与镜像只用于叶子 |
 | 复合对象 | 一层 Group；不要嵌套 Group 或设置组级透明度 |
 
 不要使用 React/JS、完整 HTML、CSS 选择器、calc、rem/em、repeat/minmax、box-shadow、滤镜、自动分页等未支持的能力。Span 允许字体、字号、字重、斜体、行高、颜色、字间距、下划线/删除线、上下标和高亮，不承担布局与对齐。Table/Chart/容器没有整体 opacity。新需求先核对语法，再决定用可用构图替代或说明限制。

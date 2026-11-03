@@ -77,6 +77,14 @@ pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resourc
         for node in &slide.nodes {
             visit(node, &root, &deck, &mut resources)?;
         }
+        if let Some(src) = slide_shuttle_core::layout::background_image(&slide.background) {
+            let path = deck.assets.get(src).map(String::as_str).unwrap_or(src);
+            if !resources.images.contains_key(src) {
+                resources
+                    .images
+                    .insert(src.into(), read(&local(&root, path)?, 32 * 1024 * 1024)?);
+            }
+        }
     }
     let total: usize = resources.fonts.iter().map(|f| f.bytes.len()).sum::<usize>()
         + resources.images.values().map(Vec::len).sum::<usize>();

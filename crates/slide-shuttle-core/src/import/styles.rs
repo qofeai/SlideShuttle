@@ -85,6 +85,11 @@ impl<'d, 'i> Styles<'d, 'i> {
                 continue;
             };
             let color = if let Some(pr) = child(bg, P, "bgPr") {
+                if let Some(css) =
+                    child(pr, A, "gradFill").and_then(|grad| self.theme.gradient(grad, problems))
+                {
+                    return css;
+                }
                 self.theme.fill(pr, None, problems)
             } else if let Some(reference) = child(bg, P, "bgRef") {
                 self.fill_reference(reference, problems)
@@ -161,13 +166,70 @@ impl<'d, 'i> Styles<'d, 'i> {
             }
         }
         if let Some(pr) = child(shape, P, "spPr") {
-            if let Some(color) = self.theme.fill(pr, None, problems) {
+            if let Some(grad) = child(pr, A, "gradFill") {
+                if let Some(css) = self.theme.gradient(grad, problems) {
+                    props.remove("fill");
+                    props.insert("gradient".into(), css.into());
+                }
+            } else if let Some(color) = self.theme.fill(pr, None, problems) {
+                props.remove("gradient");
                 props.insert("fill".into(), color_hex(color).into());
             }
             if let Some(line) = child(pr, A, "ln") {
                 self.line(line, None, props, problems);
             }
+            if let Some(effects) = child(pr, A, "effectLst") {
+                props.remove("shadow");
+                for effect in effects.children().filter(|n| n.is_element()) {
+                    let shadow = (effect.tag_name().name() == "outerShdw")
+                        .then(|| self.shadow(effect, problems))
+                        .flatten();
+                    match shadow {
+                        Some(css) => {
+                            props.insert("shadow".into(), css.into());
+                        }
+                        None => {
+                            problems.insert(format!(
+                                "{} effect is not reconstructed",
+                                effect.tag_name().name()
+                            ));
+                        }
+                    }
+                }
+            }
         }
+    }
+    /// An outer shadow as CSS `box-shadow`; DrawingML gives distance and direction.
+    fn shadow(&self, effect: X<'_, '_>, problems: &mut Problems) -> Option<String> {
+        let emu = |k: &str| {
+            effect
+                .attribute(k)
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 9525.0
+        };
+        let dir = effect
+            .attribute("dir")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            / 60000.0;
+        if effect.attribute("sx").is_some_and(|v| v != "100000")
+            || effect.attribute("sy").is_some_and(|v| v != "100000")
+            || effect.attribute("kx").is_some_and(|v| v != "0")
+            || effect.attribute("ky").is_some_and(|v| v != "0")
+        {
+            problems.insert("scaled or skewed shadows are drawn unscaled".into());
+        }
+        let color = self.theme.color_child(effect, None, problems)?;
+        let (sin, cos) = dir.to_radians().sin_cos();
+        let round = |v: f64| (v * 100.0).round() / 100.0;
+        Some(format!(
+            "{}px {}px {}px #{}",
+            round(emu("dist") * cos),
+            round(emu("dist") * sin),
+            round(emu("blurRad").min(200.0)),
+            color_hex(color)
+        ))
     }
     fn line(
         &self,
@@ -186,6 +248,37 @@ impl<'d, 'i> Styles<'d, 'i> {
                 props.insert("strokeWidth".into(), 9525.into());
             }
             props.insert("stroke".into(), color_hex(color).into());
+        }
+        if let Some(dash) = child(line, A, "prstDash").and_then(|d| d.attribute("val")) {
+            let style = match dash {
+                "solid" => "solid",
+                "sysDot" | "dot" => "dotted",
+                "dash" | "sysDash" | "lgDash" => "dashed",
+                other => {
+                    problems.insert(format!("line dash {other} is drawn as dashed"));
+                    "dashed"
+                }
+            };
+            props.insert("dash".into(), style.into());
+        }
+        for (tag, key) in [("headEnd", "markerStart"), ("tailEnd", "markerEnd")] {
+            if let Some(kind) = child(line, A, tag).and_then(|n| n.attribute("type")) {
+                let marker = match kind {
+                    "none" => None,
+                    "triangle" | "arrow" => Some("arrow"),
+                    "stealth" => Some("stealth"),
+                    "diamond" => Some("diamond"),
+                    "oval" => Some("oval"),
+                    other => {
+                        problems.insert(format!("line end {other} is not reconstructed"));
+                        None
+                    }
+                };
+                match marker {
+                    Some(m) => props.insert(key.into(), m.into()),
+                    None => props.remove(key),
+                };
+            }
         }
     }
 

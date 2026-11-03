@@ -124,14 +124,15 @@ pub(crate) fn layout_with_text(
         }
         let page = ScenePage {
             id: slide.id.clone(),
-            background: Color::parse(&slide.background)?,
+            background: page_background(&slide.background, deck, resources)?,
             items: emitter.items,
         };
         for item in &page.items {
-            if item.rect.x < -0.5
-                || item.rect.y < -0.5
-                || item.rect.right() > deck.width + 0.5
-                || item.rect.bottom() > deck.height + 0.5
+            let r = turned_bounds(item.rect, item.turn);
+            if r.x < -0.5
+                || r.y < -0.5
+                || r.right() > deck.width + 0.5
+                || r.bottom() > deck.height + 0.5
             {
                 scene.diagnostics.push(diag(
                     "out_of_bounds",
@@ -147,6 +148,39 @@ pub(crate) fn layout_with_text(
     Ok(scene)
 }
 
+/// The page background: a color, gradient, or `url(<image>)` covering the page.
+fn page_background(value: &str, deck: &Deck, resources: &Resources) -> Result<Item> {
+    let mut item = Item {
+        id: "background".into(),
+        rect: Rect {
+            x: 0.0,
+            y: 0.0,
+            width: deck.width,
+            height: deck.height,
+        },
+        ..Item::default()
+    };
+    if let Some(src) = background_image(value) {
+        if !resources.images.contains_key(src) {
+            return Err(invalid(format!("missing background image {src}")));
+        }
+        item.kind = Draw::Image {
+            src: src.into(),
+            fit: "cover".into(),
+        };
+    } else {
+        (item.fill, item.gradient) = paint(value)?;
+    }
+    Ok(item)
+}
+/// The image of a `url(<image>)` background.
+pub fn background_image(value: &str) -> Option<&str> {
+    value
+        .trim()
+        .strip_prefix("url(")
+        .and_then(|v| v.strip_suffix(')'))
+        .map(|v| v.trim().trim_matches(['"', '\'']))
+}
 fn build(
     n: &Node,
     parent: &TextStyle,
@@ -175,7 +209,16 @@ fn build(
             .map_err(|e| at(&c.source, e))
         })
         .collect::<Result<Vec<_>>>()?;
-    let style = box_style(&n.style)?;
+    let mut style = box_style(&n.style)?;
+    // A line's or path's border is its stroke, drawn along the geometry; it takes no box space.
+    if matches!(
+        n.kind,
+        Kind::Shape {
+            shape: ShapeKind::Line
+        } | Kind::Path { .. }
+    ) {
+        style.border = taffy::geometry::Rect::zero();
+    }
     let context = Leaf {
         kind: n.kind.clone(),
         text,
@@ -402,88 +445,288 @@ fn nonnegative(s: &str) -> Result<f32> {
         Ok(n)
     }
 }
-fn visual(n: &Node) -> Result<(Color, Option<LinearGradient>, Color, f32, f32, f32)> {
-    let value = n
-        .style
-        .get("background")
-        .map(String::as_str)
-        .unwrap_or("transparent");
-    let gradient = if let Some(v) = value
-        .strip_prefix("linear-gradient(")
-        .and_then(|v| v.strip_suffix(')'))
-    {
-        let v = v.split(',').map(str::trim).collect::<Vec<_>>();
-        if v.len() != 3 || !["to right", "to bottom"].contains(&v[0]) {
-            return Err(invalid(
-                "gradient supports: linear-gradient(to right|to bottom, #color, #color)",
-            ));
-        }
-        let start = Color::parse(v[1])?;
-        let end = Color::parse(v[2])?;
-        if start.3 != 255 || end.3 != 255 {
-            return Err(invalid("gradient stops must be opaque"));
-        }
-        Some(LinearGradient {
-            vertical: v[0] == "to bottom",
-            start,
-            end,
-        })
-    } else {
-        None
-    };
-    let fill = if let Some(g) = gradient {
-        g.start
-    } else {
-        Color::parse(value)?
-    };
-    let stroke = n
-        .style
-        .get("border-color")
-        .map(|v| Color::parse(v))
+/// Paint, outline, shadow and transform of a node.
+fn visual(n: &Node, item: &mut Item) -> Result<()> {
+    let style = |k: &str| n.style.get(k).map(String::as_str);
+    (item.fill, item.gradient) = paint(style("background").unwrap_or("transparent"))?;
+    item.stroke = style("border-color")
+        .map(Color::parse)
         .transpose()?
         .unwrap_or(Color::BLACK);
-    let width = n
-        .style
-        .get("border-width")
-        .map(|v| length_px(v))
+    item.stroke_width = style("border-width")
+        .map(length_px)
         .transpose()?
         .unwrap_or(0.0);
-    let radius = n
-        .style
-        .get("border-radius")
-        .map(|v| length_px(v))
+    item.dash = match style("border-style") {
+        None | Some("solid") => Dash::Solid,
+        Some("dashed") => Dash::Dashed,
+        Some("dotted") => Dash::Dotted,
+        Some(other) => {
+            return Err(invalid(format!(
+                "border-style supports solid, dashed and dotted, not {other}"
+            )));
+        }
+    };
+    item.radius = style("border-radius")
+        .map(length_px)
         .transpose()?
         .unwrap_or(0.0);
-    let opacity = n
-        .style
-        .get("opacity")
-        .map(|v| nonnegative(v))
+    item.opacity = style("opacity")
+        .map(nonnegative)
         .transpose()?
         .unwrap_or(1.0);
-    if opacity > 1.0 || radius < 0.0 || width < 0.0 {
+    item.shadow = style("box-shadow").map(shadow).transpose()?.flatten();
+    item.turn = style("transform")
+        .map(turn)
+        .transpose()?
+        .unwrap_or_default();
+    for (slot, key) in item.markers.iter_mut().zip(["marker-start", "marker-end"]) {
+        *slot = style(key)
+            .filter(|v| *v != "none")
+            .map(|v| keyword(v, "line marker"))
+            .transpose()?;
+    }
+    if item.opacity > 1.0 || item.radius < 0.0 || item.stroke_width < 0.0 {
         return Err(invalid("invalid opacity, radius or border width"));
     }
+    let leaf = n.children.is_empty();
     if n.style.contains_key("vertical-align") && !matches!(n.kind, Kind::Text { .. }) {
         return Err(invalid(
             "vertical-align (top, middle, bottom) applies to Text",
         ));
     }
-    if !n.children.is_empty() && opacity != 1.0 {
+    if !leaf && item.opacity != 1.0 {
         return Err(invalid(
             "container opacity is not supported; apply opacity to leaves",
         ));
     }
-    if matches!(n.kind, Kind::Image { .. }) && (radius > 0.0 || width > 0.0 || fill.3 > 0) {
+    if !leaf && !item.turn.is_identity() {
+        return Err(invalid(
+            "transform applies to leaves; containers cannot be rotated",
+        ));
+    }
+    let boxed = item.fill.3 > 0 || item.stroke_width > 0.0;
+    if matches!(n.kind, Kind::Text { .. }) && boxed && !item.turn.is_identity() {
+        return Err(invalid(
+            "a rotated Text cannot have a background or border; rotate a Shape behind it",
+        ));
+    }
+    if matches!(n.kind, Kind::Text { .. }) && !boxed && item.shadow.is_some() {
+        return Err(invalid(
+            "box-shadow needs the Text's box to be visible: give it a background or border",
+        ));
+    }
+    let open_line = matches!(
+        n.kind,
+        Kind::Shape {
+            shape: ShapeKind::Line
+        } | Kind::Path { .. }
+    );
+    if item.markers.iter().any(Option::is_some) && !open_line {
+        return Err(invalid(
+            "marker-start/marker-end apply to line Shapes and Paths",
+        ));
+    }
+    if matches!(n.kind, Kind::Image { .. })
+        && (item.radius > 0.0 || item.stroke_width > 0.0 || item.fill.3 > 0)
+    {
         return Err(invalid(
             "image decoration belongs on a wrapping Box; Image border, background and radius are not supported",
         ));
     }
     if matches!(n.kind, Kind::Table { .. } | Kind::Chart { .. })
-        && (gradient.is_some() || opacity != 1.0)
+        && (item.gradient.is_some()
+            || item.opacity != 1.0
+            || item.shadow.is_some()
+            || !item.turn.is_identity())
     {
-        return Err(invalid("table/chart gradient or opacity is not supported"));
+        return Err(invalid(
+            "table/chart gradient, opacity, shadow or transform is not supported",
+        ));
     }
-    Ok((fill, gradient, stroke, width, radius, opacity))
+    Ok(())
+}
+/// A color, `linear-gradient(...)` or `radial-gradient(...)`.
+pub(crate) fn paint(value: &str) -> Result<(Color, Option<Gradient>)> {
+    let value = value.trim();
+    for (prefix, radial) in [("linear-gradient(", false), ("radial-gradient(", true)] {
+        if let Some(args) = value.strip_prefix(prefix).and_then(|v| v.strip_suffix(')')) {
+            let g = gradient(args, radial)?;
+            return Ok((g.stops[0].1, Some(g)));
+        }
+    }
+    Ok((Color::parse(value)?, None))
+}
+fn gradient(args: &str, radial: bool) -> Result<Gradient> {
+    let mut parts = args.split(',').map(str::trim).collect::<Vec<_>>();
+    let mut angle = 180.0;
+    let first = parts.first().copied().unwrap_or("");
+    if radial {
+        if first == "circle" {
+            parts.remove(0);
+        }
+    } else if let Some(deg) = first.strip_suffix("deg") {
+        angle = finite(
+            deg.trim()
+                .parse::<f32>()
+                .map_err(|_| invalid("invalid gradient angle"))?,
+            "gradient angle",
+        )?
+        .rem_euclid(360.0);
+        parts.remove(0);
+    } else if let Some(side) = first.strip_prefix("to ") {
+        angle = match side {
+            "top" => 0.0,
+            "right" => 90.0,
+            "bottom" => 180.0,
+            "left" => 270.0,
+            _ => {
+                return Err(invalid(
+                    "gradient direction is to top/right/bottom/left or an angle in deg",
+                ));
+            }
+        };
+        parts.remove(0);
+    }
+    if !(2..=8).contains(&parts.len()) {
+        return Err(invalid("a gradient needs 2–8 color stops"));
+    }
+    let mut stops = Vec::new();
+    let mut given = Vec::new();
+    for part in parts {
+        let mut words = part.split_whitespace();
+        let color = Color::parse(words.next().unwrap_or(""))?;
+        let at = words
+            .next()
+            .map(|p| {
+                p.strip_suffix('%')
+                    .and_then(|n| n.parse::<f32>().ok())
+                    .filter(|n| (0.0..=100.0).contains(n))
+                    .map(|n| n / 100.0)
+                    .ok_or_else(|| invalid(format!("gradient stop position must be 0%–100%: {p}")))
+            })
+            .transpose()?;
+        if words.next().is_some() {
+            return Err(invalid(
+                "a gradient stop is a color and an optional percentage",
+            ));
+        }
+        stops.push((0.0, color));
+        given.push(at);
+    }
+    // Missing positions: first 0%, last 100%, others evenly between their neighbours.
+    let last = given.len() - 1;
+    given[0] = given[0].or(Some(0.0));
+    given[last] = given[last].or(Some(1.0));
+    let mut i = 0;
+    while i < last {
+        let next = (i + 1..=last).find(|&j| given[j].is_some()).unwrap();
+        let (a, b) = (given[i].unwrap(), given[next].unwrap());
+        let span = (next - i) as f32;
+        for (k, slot) in given[i + 1..next].iter_mut().enumerate() {
+            *slot = Some(a + (b - a) * (k + 1) as f32 / span);
+        }
+        i = next;
+    }
+    for (stop, at) in stops.iter_mut().zip(given) {
+        stop.0 = at.unwrap();
+    }
+    if stops.windows(2).any(|w| w[1].0 < w[0].0) {
+        return Err(invalid("gradient stop positions must not decrease"));
+    }
+    Ok(Gradient {
+        radial,
+        angle,
+        stops,
+    })
+}
+/// `box-shadow: <x> <y> [<blur>] <color>` or `none`.
+fn shadow(value: &str) -> Result<Option<Shadow>> {
+    if value.trim() == "none" {
+        return Ok(None);
+    }
+    let words = value.split_whitespace().collect::<Vec<_>>();
+    let (lengths, color) = match words.as_slice() {
+        [lengths @ .., color] if (2..=3).contains(&lengths.len()) => (lengths, color),
+        _ => return Err(invalid("box-shadow syntax: <x> <y> [<blur>] <color>")),
+    };
+    let lengths = lengths
+        .iter()
+        .map(|v| length_px(v))
+        .collect::<Result<Vec<_>>>()?;
+    let blur = lengths.get(2).copied().unwrap_or(0.0);
+    if !(0.0..=200.0).contains(&blur) || lengths[..2].iter().any(|v| v.abs() > 1000.0) {
+        return Err(invalid(
+            "box-shadow blur must be 0–200px and offsets within ±1000px",
+        ));
+    }
+    Ok(Some(Shadow {
+        dx: lengths[0],
+        dy: lengths[1],
+        blur,
+        color: Color::parse(color)?,
+    }))
+}
+/// `transform`: `rotate(<deg>)`, `scaleX(-1)` and `scaleY(-1)`, applied right to left as
+/// in CSS, normalized to mirroring first, then rotation (the OOXML order).
+fn turn(value: &str) -> Result<Turn> {
+    let mut t = Turn::default();
+    if value.trim() == "none" {
+        return Ok(t);
+    }
+    let functions = value
+        .split(')')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect::<Vec<_>>();
+    for f in functions.iter().rev() {
+        let (name, arg) = f
+            .split_once('(')
+            .ok_or_else(|| invalid("transform functions look like rotate(30deg)"))?;
+        match (name.trim(), arg.trim()) {
+            ("rotate", deg) => {
+                let deg = deg
+                    .strip_suffix("deg")
+                    .and_then(|d| d.trim().parse::<f32>().ok())
+                    .filter(|d| d.is_finite())
+                    .ok_or_else(|| invalid("rotate takes an angle in deg"))?;
+                t.rotate += deg;
+            }
+            ("scaleX", "-1") => {
+                t.rotate = -t.rotate;
+                t.flip_x = !t.flip_x;
+            }
+            ("scaleY", "-1") => {
+                t.rotate = -t.rotate;
+                t.flip_y = !t.flip_y;
+            }
+            _ => {
+                return Err(invalid(
+                    "transform supports rotate(<deg>), scaleX(-1) and scaleY(-1)",
+                ));
+            }
+        }
+    }
+    if t.flip_x && t.flip_y {
+        // Mirroring both ways is a half turn.
+        t.flip_x = false;
+        t.flip_y = false;
+        t.rotate += 180.0;
+    }
+    t.rotate = t.rotate.rem_euclid(360.0);
+    Ok(t)
+}
+/// Axis-aligned bounds of a rect turned about its center.
+pub(crate) fn turned_bounds(r: Rect, turn: Turn) -> Rect {
+    let (sin, cos) = turn.rotate.to_radians().sin_cos();
+    let w = (r.width * cos).abs() + (r.height * sin).abs();
+    let h = (r.width * sin).abs() + (r.height * cos).abs();
+    Rect {
+        x: r.x + (r.width - w) / 2.0,
+        y: r.y + (r.height - h) / 2.0,
+        width: w,
+        height: h,
+    }
 }
 
 /// Per-slide state shared while turning laid-out nodes into scene items.
@@ -521,22 +764,18 @@ impl Emitter<'_> {
                 - l.padding.bottom)
                 .max(0.0),
         };
-        let (fill, gradient, stroke, stroke_width, radius, opacity) = visual(n)?;
         let ts = self.computed[&n.id].clone();
         let mut item = Item {
             id: n.id.clone(),
             rect,
-            fill,
-            gradient,
-            stroke,
-            stroke_width,
-            radius,
-            opacity,
             group: group.map(str::to_owned),
-            kind: Draw::Box,
             text_style: ts.clone(),
             source: Some(n.source.clone()),
+            ..Item::default()
         };
+        visual(n, &mut item)?;
+        let fill = item.fill;
+        let stroke_width = item.stroke_width;
         item.kind = match &n.kind {
             Kind::Box => Draw::Box,
             Kind::Group => Draw::Group,
@@ -552,6 +791,7 @@ impl Emitter<'_> {
                     item.fill = Color(0, 0, 0, 0);
                     item.gradient = None;
                     item.stroke_width = 0.0;
+                    item.shadow = None;
                 }
                 let wrap = n.style.get("white-space").is_none_or(|s| s != "nowrap");
                 let mut shaped = self
@@ -694,15 +934,12 @@ fn primitive(parent: &Item, id: String, rect: Rect, fill: Color, kind: Draw) -> 
         id,
         rect,
         fill,
-        gradient: None,
         stroke: Color(0, 0, 0, 0),
-        stroke_width: 0.0,
-        radius: 0.0,
-        opacity: 1.0,
         group: parent.group.clone(),
         kind,
         text_style: parent.text_style.clone(),
         source: parent.source.clone(),
+        ..Item::default()
     }
 }
 fn label(

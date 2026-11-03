@@ -103,6 +103,13 @@ impl Compiler {
         }
         for slide in &mut deck.slides {
             bind(&mut slide.nodes, &deck.assets, &self.resources);
+            if let Some(src) = layout::background_image(&slide.background)
+                && !self.resources.images.contains_key(src)
+                && let Some(path) = deck.assets.get(src)
+                && self.resources.images.contains_key(path)
+            {
+                slide.background = format!("url({path})");
+            }
         }
         let mut scene = layout::layout_with_text(&deck, &self.resources, &mut self.text)?;
         scene.diagnostics.extend(substitutions);

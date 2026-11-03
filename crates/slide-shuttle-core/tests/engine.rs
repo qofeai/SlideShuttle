@@ -343,6 +343,134 @@ fn rich_text_rejects_mixed_content_and_unsafe_links() {
     let d = parse(&doc(r#"<Box id="b" style="vertical-align:middle"/>"#)).unwrap();
     assert!(layout(&d, &resources()).is_err());
 }
+fn png(color: [u8; 4], w: u32, h: u32) -> Vec<u8> {
+    let mut b = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(w, h, image::Rgba(color)))
+        .write_to(&mut b, image::ImageFormat::Png)
+        .unwrap();
+    b.into_inner()
+}
+#[test]
+fn visual_styles_render_export_and_import_round_trip() {
+    let mut r = resources();
+    r.images
+        .insert("photo.png".into(), png([9, 168, 143, 255], 40, 20));
+    let source = r##"<Deck width="640px" height="360px" font-family="DejaVu Sans">
+      <Slide id="a" background="linear-gradient(135deg, #F8FAFC, #E0F2FE 60%, #BAE6FD)">
+        <Shape id="card" style="position:absolute;left:20px;top:20px;width:200px;height:100px;background:#FFFFFF;border-radius:12px;box-shadow:0 10px 20px #00000080"/>
+        <Shape id="radial" shape="ellipse" style="position:absolute;left:260px;top:20px;width:100px;height:100px;background:radial-gradient(#FFFFFF, #0369A1)"/>
+        <Shape id="tilt" style="position:absolute;left:400px;top:60px;width:160px;height:60px;background:#22C55E;transform:scaleX(-1) rotate(30deg)"/>
+        <Shape id="dash" style="position:absolute;left:20px;top:160px;width:200px;height:80px;border:3px dashed #0F766E"/>
+        <Shape id="arrow" shape="line" style="position:absolute;left:260px;top:200px;width:200px;height:0px;border:3px solid #0F172A;marker-start:oval;marker-end:arrow"/>
+        <Image id="photo" src="photo.png" style="position:absolute;left:500px;top:160px;width:100px;height:50px;transform:rotate(10deg);box-shadow:4px 4px 0 #000000"/>
+        <Text id="label" style="position:absolute;left:20px;top:280px;width:300px;height:40px;transform:rotate(-5deg)">Tilted label</Text>
+      </Slide>
+      <Slide id="b" background="url(photo.png)"><Shape id="x" style="width:10px;height:10px;background:#000"/></Slide>
+    </Deck>"##;
+    let d = parse(source).unwrap();
+    let s = layout(&d, &r).unwrap();
+    assert!(!s.has_errors(), "{:?}", s.diagnostics);
+    let item = |id: &str| s.pages[0].items.iter().find(|i| i.id == id).unwrap();
+    assert_eq!(
+        item("tilt").turn,
+        Turn {
+            rotate: 330.0,
+            flip_x: true,
+            flip_y: false
+        }
+    );
+    assert_eq!(
+        item("arrow").rect.height,
+        0.0,
+        "a line's stroke takes no box space"
+    );
+    let page = image::load_from_memory(&render::render_png(&s, 0, &r, 1.0).unwrap())
+        .unwrap()
+        .to_rgba8();
+    assert!(
+        page.get_pixel(120, 125)[0] < page.get_pixel(120, 150)[0],
+        "the card casts a soft shadow"
+    );
+    assert!(
+        page.get_pixel(310, 70)[0] > page.get_pixel(268, 70)[0],
+        "the radial gradient is lightest at the center"
+    );
+    let pdf = render::render_pdf(&s, &r).unwrap();
+    let parts = zip_read(&export_pptx(&s, &r, "visual").unwrap());
+    let slide = String::from_utf8(parts["ppt/slides/slide1.xml"].clone()).unwrap();
+    for native in [
+        r#"<a:lin ang="2700000" scaled="0"/>"#,
+        r#"<a:gs pos="60000">"#,
+        r#"<a:path path="circle">"#,
+        "<a:outerShdw ",
+        r#"rot="19800000" flipH="1""#,
+        r#"<a:prstDash val="dash"/>"#,
+        r#"<a:headEnd type="oval""#,
+        r#"<a:tailEnd type="triangle""#,
+    ] {
+        assert!(slide.contains(native), "{native}");
+    }
+    assert!(String::from_utf8_lossy(&parts["ppt/slides/slide2.xml"]).contains("<a:blipFill"));
+    let imported = import::import_pptx(&zip_write(&parts)).unwrap();
+    assert!(
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let mut r2 = r.clone();
+    r2.images.extend(imported.assets.clone());
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r2).unwrap();
+    for i in 0..2 {
+        let a = image::load_from_memory(&render::render_png(&s, i, &r, 1.0).unwrap())
+            .unwrap()
+            .to_rgba8();
+        let b = image::load_from_memory(&render::render_png(&again, i, &r2, 1.0).unwrap())
+            .unwrap()
+            .to_rgba8();
+        let off = a
+            .pixels()
+            .zip(b.pixels())
+            .filter(|(x, y)| x.0.iter().zip(y.0).any(|(p, q)| p.abs_diff(q) > 16))
+            .count();
+        assert!(
+            off < 50,
+            "page {i}: {off} pixels differ after export → import"
+        );
+    }
+    assert!(pdf.len() > 1000);
+}
+#[test]
+fn visual_styles_reject_what_cannot_be_drawn_consistently() {
+    for (inner, why) in [
+        (
+            r#"<Shape id="s" style="width:9px;height:9px;marker-end:arrow"/>"#,
+            "markers on a rectangle",
+        ),
+        (
+            r#"<Box id="b" style="transform:rotate(9deg)"><Shape id="s"/></Box>"#,
+            "rotated container",
+        ),
+        (
+            r#"<Text id="t" style="width:90px;height:30px;box-shadow:2px 2px #000">x</Text>"#,
+            "shadow on an invisible text box",
+        ),
+        (
+            r#"<Text id="t" style="width:90px;height:30px;background:#FFF;transform:rotate(5deg)">x</Text>"#,
+            "rotated text box",
+        ),
+        (
+            r#"<Shape id="s" style="width:9px;height:9px;background:linear-gradient(to bottom right, #000, #FFF)"/>"#,
+            "corner direction",
+        ),
+        (
+            r#"<Shape id="s" style="width:9px;height:9px;transform:skewX(9deg)"/>"#,
+            "skew",
+        ),
+    ] {
+        let failed = parse(&doc(inner)).and_then(|d| layout(&d, &resources()).map(|_| ()));
+        assert!(failed.is_err(), "{why}");
+    }
+}
 #[test]
 fn declared_font_family_must_be_in_its_file() {
     let mut r = resources();
@@ -477,7 +605,7 @@ fn bounds_and_nested_group_are_checked() {
     assert!(layout(&d, &resources()).is_err());
 }
 #[test]
-fn simple_gradient_is_native_and_not_silently_imported() {
+fn simple_gradient_is_native_and_imported() {
     let (_, r, s, b) = compile(&doc(
         r##"<Shape id="g" style="width:200px;height:100px;background:linear-gradient(to right, #FF0000, #0000FF)"/>"##,
     ));
@@ -492,12 +620,14 @@ fn simple_gradient_is_native_and_not_silently_imported() {
             .unwrap()
             .contains("<a:gradFill")
     );
+    let imported = import::import_pptx(&b).unwrap();
     assert!(
-        inspect_pptx(&b)
-            .unwrap()
-            .losses
-            .iter()
-            .any(|l| l.reason.contains("gradFill"))
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    assert!(
+        imported.files["pages/page-1.xml"].contains("background:linear-gradient(90deg, #FF0000")
     );
 }
 #[test]

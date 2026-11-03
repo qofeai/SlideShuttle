@@ -63,6 +63,11 @@ const PROPS: &[&str] = &[
     "letter-spacing",
     "text-decoration",
     "vertical-align",
+    "border-style",
+    "box-shadow",
+    "transform",
+    "marker-start",
+    "marker-end",
 ];
 /// Properties a `Span` or `A` may set; `background` (from `background-color`) is a highlight.
 const SPAN_PROPS: &[&str] = &[
@@ -421,7 +426,9 @@ impl<'a> Context<'a> {
             return Err(invalid(format!("duplicate slide id: {id}")));
         }
         let background = self.resolve(n.attribute("background").unwrap_or("#FFFFFF"))?;
-        Color::parse(&background)?;
+        if crate::layout::background_image(&background).is_none() {
+            crate::layout::paint(&background)?;
+        }
         let nodes = self.nodes(n, "", &BTreeMap::new(), 0)?;
         Ok(Slide {
             id,
@@ -958,10 +965,13 @@ fn declare(map: &mut Css, k: &str, v: &str) -> Result<()> {
             set("column-gap", column);
         }
         "border" => {
-            let [width, "solid", color] = p[..] else {
-                return Err(invalid("border syntax: <length> solid <hex>"));
+            let [width, style @ ("solid" | "dashed" | "dotted"), color] = p[..] else {
+                return Err(invalid(
+                    "border syntax: <length> solid|dashed|dotted <color>",
+                ));
             };
             set("border-width", width);
+            set("border-style", style);
             set("border-color", color);
         }
         "background-color" => {

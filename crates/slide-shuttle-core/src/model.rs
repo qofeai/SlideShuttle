@@ -250,7 +250,7 @@ impl Rect {
         self.y + self.height
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Color(pub u8, pub u8, pub u8, pub u8);
 impl Color {
     pub const BLACK: Self = Self(0, 0, 0, 255);
@@ -360,7 +360,8 @@ impl Scene {
 #[derive(Clone, Debug)]
 pub struct ScenePage {
     pub id: String,
-    pub background: Color,
+    /// Full-page item: a solid or gradient Box, or an Image covering the page.
+    pub background: Item,
     pub items: Vec<Item>,
 }
 #[derive(Clone, Debug)]
@@ -368,21 +369,84 @@ pub struct Item {
     pub id: String,
     pub rect: Rect,
     pub fill: Color,
-    pub gradient: Option<LinearGradient>,
+    pub gradient: Option<Gradient>,
     pub stroke: Color,
     pub stroke_width: f32,
+    pub dash: Dash,
+    /// Line end decorations at the start and end of a line or path.
+    pub markers: [Option<Marker>; 2],
     pub radius: f32,
     pub opacity: f32,
+    pub shadow: Option<Shadow>,
+    pub turn: Turn,
     pub group: Option<String>,
     pub kind: Draw,
     pub text_style: TextStyle,
     pub source: Option<Source>,
 }
-#[derive(Clone, Copy, Debug)]
-pub struct LinearGradient {
-    pub vertical: bool,
-    pub start: Color,
-    pub end: Color,
+impl Default for Item {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            rect: Rect::default(),
+            fill: Color::default(),
+            gradient: None,
+            stroke: Color::BLACK,
+            stroke_width: 0.0,
+            dash: Dash::Solid,
+            markers: [None, None],
+            radius: 0.0,
+            opacity: 1.0,
+            shadow: None,
+            turn: Turn::default(),
+            group: None,
+            kind: Draw::Box,
+            text_style: TextStyle::default(),
+            source: None,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gradient {
+    pub radial: bool,
+    /// Linear direction as a CSS angle: 0 points up, 90 right, clockwise.
+    pub angle: f32,
+    /// Positions in [0, 1], non-decreasing.
+    pub stops: Vec<(f32, Color)>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Dash {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Marker {
+    Arrow,
+    Stealth,
+    Diamond,
+    Oval,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    pub dx: f32,
+    pub dy: f32,
+    pub blur: f32,
+    pub color: Color,
+}
+/// Rotation (degrees, clockwise) and mirroring about the item's center; does not affect layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Turn {
+    pub rotate: f32,
+    pub flip_x: bool,
+    pub flip_y: bool,
+}
+impl Turn {
+    pub fn is_identity(self) -> bool {
+        self == Self::default()
+    }
 }
 #[derive(Clone, Debug)]
 pub enum Draw {

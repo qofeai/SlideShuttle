@@ -108,31 +108,85 @@ fn fill(c: Color, opacity: f32) -> String {
     }
 }
 fn item_fill(item: &Item) -> String {
-    if let Some(g) = item.gradient {
-        format!(
-            "<a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\">{}</a:gs><a:gs pos=\"100000\">{}</a:gs></a:gsLst><a:lin ang=\"{}\" scaled=\"1\"/></a:gradFill>",
-            color(g.start, item.opacity),
-            color(g.end, item.opacity),
-            if g.vertical { 5400000 } else { 0 }
-        )
+    let Some(g) = &item.gradient else {
+        return fill(item.fill, item.opacity);
+    };
+    let stops = g
+        .stops
+        .iter()
+        .map(|(at, c)| {
+            format!(
+                "<a:gs pos=\"{}\">{}</a:gs>",
+                (at * 100000.0).round() as u32,
+                color(*c, item.opacity)
+            )
+        })
+        .collect::<String>();
+    let shade = if g.radial {
+        "<a:path path=\"circle\"><a:fillToRect l=\"50000\" t=\"50000\" r=\"50000\" b=\"50000\"/></a:path>".into()
     } else {
-        fill(item.fill, item.opacity)
-    }
+        // DrawingML measures from "to right", CSS from "to top".
+        format!(
+            "<a:lin ang=\"{}\" scaled=\"0\"/>",
+            ((g.angle - 90.0).rem_euclid(360.0) * 60000.0).round() as u32
+        )
+    };
+    format!("<a:gradFill rotWithShape=\"1\"><a:gsLst>{stops}</a:gsLst>{shade}</a:gradFill>")
 }
 fn stroke(item: &Item) -> String {
     if item.stroke_width <= 0.0 {
-        "<a:ln><a:noFill/></a:ln>".into()
-    } else {
-        format!(
-            "<a:ln w=\"{}\">{}<a:prstDash val=\"solid\"/></a:ln>",
-            emu(item.stroke_width),
-            fill(item.stroke, item.opacity)
-        )
+        return "<a:ln><a:noFill/></a:ln>".into();
     }
-}
-fn xfrm(r: Rect) -> String {
+    let dash = match item.dash {
+        Dash::Solid => "solid",
+        Dash::Dashed => "dash",
+        Dash::Dotted => "sysDot",
+    };
+    let ends = ["headEnd", "tailEnd"]
+        .iter()
+        .zip(item.markers)
+        .filter_map(|(tag, marker)| {
+            let kind = match marker? {
+                Marker::Arrow => "triangle",
+                Marker::Stealth => "stealth",
+                Marker::Diamond => "diamond",
+                Marker::Oval => "oval",
+            };
+            Some(format!("<a:{tag} type=\"{kind}\" w=\"med\" len=\"med\"/>"))
+        })
+        .collect::<String>();
     format!(
-        "<a:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>",
+        "<a:ln w=\"{}\">{}<a:prstDash val=\"{dash}\"/>{ends}</a:ln>",
+        emu(item.stroke_width),
+        fill(item.stroke, item.opacity)
+    )
+}
+/// Outer shadow; DrawingML gives distance and direction instead of x/y offsets.
+fn effects(item: &Item) -> String {
+    let Some(s) = item.shadow else {
+        return String::new();
+    };
+    let dir = (s.dy.atan2(s.dx).to_degrees().rem_euclid(360.0) * 60000.0).round() as u32;
+    format!(
+        "<a:effectLst><a:outerShdw blurRad=\"{}\" dist=\"{}\" dir=\"{dir}\" algn=\"ctr\" rotWithShape=\"0\">{}</a:outerShdw></a:effectLst>",
+        emu(s.blur),
+        emu(s.dx.hypot(s.dy)),
+        color(s.color, item.opacity)
+    )
+}
+fn xfrm(r: Rect, t: Turn) -> String {
+    let mut attrs = String::new();
+    if t.rotate != 0.0 {
+        attrs.push_str(&format!(" rot=\"{}\"", (t.rotate * 60000.0).round() as u32));
+    }
+    if t.flip_x {
+        attrs.push_str(" flipH=\"1\"");
+    }
+    if t.flip_y {
+        attrs.push_str(" flipV=\"1\"");
+    }
+    format!(
+        "<a:xfrm{attrs}><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>",
         emu(r.x),
         emu(r.y),
         emu(r.width),
@@ -182,6 +236,16 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
             format!("{R}/slideLayout"),
             "../slideLayouts/slideLayout1.xml".into(),
         )];
+        let background = match &page.background.kind {
+            Draw::Image { src, fit } => {
+                let (rel, width, height) = image_rel(src, &mut pkg, &mut rels, &mut shared)?;
+                let (_, crop) = fitted(page.background.rect, width, height, fit);
+                format!(
+                    "<a:blipFill dpi=\"0\" rotWithShape=\"1\"><a:blip r:embed=\"{rel}\"/>{crop}<a:stretch><a:fillRect/></a:stretch></a:blipFill>"
+                )
+            }
+            _ => item_fill(&page.background),
+        };
         let mut id = 2u32;
         let mut body = String::new();
         for item in page.items.iter().filter(|i| i.group.is_none()) {
@@ -223,7 +287,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
         let slide = format!(
             "<p:sld xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:cSld name=\"{}\"><p:bg><p:bgPr>{}<a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{body}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>",
             xml(&page.id),
-            fill(page.background, 1.0)
+            background
         );
         pkg.text(
             &format!("ppt/slides/slide{n}.xml"),
@@ -286,6 +350,56 @@ fn media_part(bytes: &[u8]) -> Result<(Vec<u8>, &'static str, u32, u32)> {
         }
     })
 }
+/// A relationship to the image's media part (written once per package), and its pixel size.
+fn image_rel(
+    src: &str,
+    pkg: &mut Package,
+    rels: &mut Vec<(String, String, String)>,
+    shared: &mut Shared,
+) -> Result<(String, f32, f32)> {
+    if !shared.media.contains_key(src) {
+        let bytes = shared
+            .resources
+            .images
+            .get(src)
+            .ok_or_else(|| invalid("missing PPTX image resource"))?;
+        let (bytes, extension, width, height) = media_part(bytes)?;
+        let name = format!("image{}.{extension}", shared.media.len() + 1);
+        pkg.bytes(
+            &format!("ppt/media/{name}"),
+            bytes,
+            &format!("image/{extension}"),
+        );
+        shared.media.insert(src.into(), (name, width, height));
+    }
+    let (name, width, height) = &shared.media[src];
+    let rel = format!("rImage{}", rels.len());
+    rels.push((
+        rel.clone(),
+        format!("{R}/image"),
+        format!("../media/{name}"),
+    ));
+    Ok((rel, *width as f32, *height as f32))
+}
+/// The picture frame and source crop for an object-fit.
+fn fitted(rect: Rect, width: f32, height: f32, fit: &str) -> (Rect, String) {
+    match fit {
+        "contain" => (
+            crate::render::image_rect(rect, width, height, fit),
+            String::new(),
+        ),
+        "cover" => {
+            let ir = crate::render::image_rect(rect, width, height, fit);
+            let l = ((rect.x - ir.x) / ir.width * 100000.0).round() as i64;
+            let t = ((rect.y - ir.y) / ir.height * 100000.0).round() as i64;
+            (
+                rect,
+                format!("<a:srcRect l=\"{l}\" r=\"{l}\" t=\"{t}\" b=\"{t}\"/>"),
+            )
+        }
+        _ => (rect, String::new()),
+    }
+}
 fn write_item(
     item: &Item,
     id: &mut u32,
@@ -305,11 +419,12 @@ fn write_item(
             anchor,
             ..
         } => format!(
-            "<p:sp>{}<p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}{}</p:spPr><p:txBody><a:bodyPr wrap=\"{}\" lIns=\"0\" rIns=\"0\" tIns=\"0\" bIns=\"0\" anchor=\"{}\"><a:noAutofit/></a:bodyPr><a:lstStyle/>{}</p:txBody></p:sp>",
+            "<p:sp>{}<p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}{}{}</p:spPr><p:txBody><a:bodyPr wrap=\"{}\" lIns=\"0\" rIns=\"0\" tIns=\"0\" bIns=\"0\" anchor=\"{}\"><a:noAutofit/></a:bodyPr><a:lstStyle/>{}</p:txBody></p:sp>",
             nv(ident, &item.id, true),
-            xfrm(item.rect),
+            xfrm(item.rect, item.turn),
             item_fill(item),
             stroke(item),
+            effects(item),
             if *export_wrap { "square" } else { "none" },
             match anchor {
                 VerticalAlign::Top => "t",
@@ -319,44 +434,14 @@ fn write_item(
             paragraphs(content, &item.text_style, item.opacity, rels)?
         ),
         Draw::Image { src, fit } => {
-            let bytes = shared
-                .resources
-                .images
-                .get(src)
-                .ok_or_else(|| invalid("missing PPTX image resource"))?;
-            if !shared.media.contains_key(src) {
-                let (bytes, extension, width, height) = media_part(bytes)?;
-                let name = format!("image{}.{extension}", shared.media.len() + 1);
-                pkg.bytes(
-                    &format!("ppt/media/{name}"),
-                    bytes,
-                    &format!("image/{extension}"),
-                );
-                shared.media.insert(src.clone(), (name, width, height));
-            }
-            let (name, width, height) = &shared.media[src];
-            let rel = format!("rImage{}", rels.len());
-            rels.push((
-                rel.clone(),
-                format!("{R}/image"),
-                format!("../media/{name}"),
-            ));
-            let (width, height) = (*width as f32, *height as f32);
-            let (mut rect, mut crop) = (item.rect, String::new());
-            if fit == "contain" {
-                rect = crate::render::image_rect(rect, width, height, fit);
-            }
-            if fit == "cover" {
-                let ir = crate::render::image_rect(rect, width, height, fit);
-                let l = ((rect.x - ir.x) / ir.width * 100000.0).round() as i64;
-                let t = ((rect.y - ir.y) / ir.height * 100000.0).round() as i64;
-                crop = format!("<a:srcRect l=\"{l}\" r=\"{l}\" t=\"{t}\" b=\"{t}\"/>");
-            }
+            let (rel, width, height) = image_rel(src, pkg, rels, shared)?;
+            let (rect, crop) = fitted(item.rect, width, height, fit);
             format!(
-                "<p:pic><p:nvPicPr><p:cNvPr id=\"{ident}\" name=\"d:{}\"/><p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed=\"{rel}\"><a:alphaModFix amt=\"{}\"/></a:blip>{crop}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr></p:pic>",
+                "<p:pic><p:nvPicPr><p:cNvPr id=\"{ident}\" name=\"d:{}\"/><p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed=\"{rel}\"><a:alphaModFix amt=\"{}\"/></a:blip>{crop}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}</p:spPr></p:pic>",
                 xml(&item.id),
                 (item.opacity * 100000.0) as u32,
-                xfrm(rect)
+                xfrm(rect, item.turn),
+                effects(item)
             )
         }
         Draw::Table { rows, columns, .. } => table(item, ident, rows, columns)?,
@@ -421,11 +506,12 @@ fn write_item(
                 format!("<a:prstGeom prst=\"{name}\"><a:avLst>{adjust}</a:avLst></a:prstGeom>")
             };
             format!(
-                "<p:sp>{}<p:spPr>{}{geom}{}{}</p:spPr></p:sp>",
+                "<p:sp>{}<p:spPr>{}{geom}{}{}{}</p:spPr></p:sp>",
                 nv(ident, &item.id, false),
-                xfrm(item.rect),
+                xfrm(item.rect, item.turn),
                 item_fill(item),
-                stroke(item)
+                stroke(item),
+                effects(item)
             )
         }
     })
