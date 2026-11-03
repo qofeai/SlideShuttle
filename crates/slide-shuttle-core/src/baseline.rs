@@ -51,6 +51,10 @@ impl Baseline {
 }
 
 pub fn resource_signature(resources: &Resources) -> Result<String> {
+    Ok(signatures(resources)?.1)
+}
+/// (font signature, resource signature), hashing each resource byte once.
+fn signatures(resources: &Resources) -> Result<(String, String)> {
     let fonts = resources
         .fonts
         .iter()
@@ -61,7 +65,10 @@ pub fn resource_signature(resources: &Resources) -> Result<String> {
         .iter()
         .map(|(n, b)| (n, digest(b)))
         .collect::<BTreeMap<_, _>>();
-    Ok(digest(&serde_json::to_vec(&json!([fonts, images]))?))
+    Ok((
+        digest(&serde_json::to_vec(&fonts)?),
+        digest(&serde_json::to_vec(&json!([fonts, images]))?),
+    ))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,8 +156,7 @@ pub fn review(
     };
     // Images can intentionally change. Only font identity and engine changes invalidate layout inference.
     let old_fonts = base.resources.split(':').next().unwrap_or("");
-    let resource_key = resource_signature(resources)?;
-    let current_fonts = font_signature(resources)?;
+    let (current_fonts, resource_key) = signatures(resources)?;
     if base.version != 1 || base.engine != ENGINE || old_fonts != current_fonts {
         add(
             "engine",
@@ -389,20 +395,8 @@ pub fn review(
 }
 
 pub fn profile(resources: &Resources) -> Result<String> {
-    Ok(format!(
-        "{}:{}",
-        font_signature(resources)?,
-        resource_signature(resources)?
-    ))
-}
-fn font_signature(resources: &Resources) -> Result<String> {
-    Ok(digest(&serde_json::to_vec(
-        &resources
-            .fonts
-            .iter()
-            .map(|f| (&f.family, digest(&f.bytes)))
-            .collect::<Vec<_>>(),
-    )?))
+    let (fonts, all) = signatures(resources)?;
+    Ok(format!("{fonts}:{all}"))
 }
 fn classify(b: &Value, e: &Value, p: &Value) -> &'static str {
     if b == e && e == p {
