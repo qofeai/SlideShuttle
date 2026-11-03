@@ -36,7 +36,7 @@ target/debug/slide-shuttle export examples/demo.xml --out examples/output/demo.p
 | `slide-shuttle-cli` | 资源加载、命令行、旁车和导出回执；命令 `slide-shuttle` |
 | `slide-shuttle-wasm` | `Engine` / `CompiledDeck`，编译后按页渲染，显式注入字体和图片 |
 
-源文件只有一份权威。解析后的文档保留稳定 ID；布局场景是派生结果。PNG 和 PDF 消费同一份已经整形、定位的字形。PPTX 保留文本和对象，Office 会使用自身排版引擎，因此不能把原生预览当成 Office 的像素级保证。原生数据图表的 Office 排版也会与本项目预览不同。
+源文件只有一份权威。解析后的文档保留稳定 ID；布局场景是派生结果。PNG 和 PDF 消费同一份已经整形、定位的字形。PPTX 保留文本和对象，Office 会使用自身排版引擎，因此不能把原生预览当成 Office 的像素级保证。原生数据图表固定了绘图区、图例和坐标轴刻度，几何与预览一致，文字仍由 Office 排版。
 
 ## 语言示例
 

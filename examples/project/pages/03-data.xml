@@ -3,10 +3,10 @@
     <Text id="label" style="height:28px;font-size:16px;line-height:26px;color:var(--accent)">DATA, NOT SCREENSHOTS / 保留数据</Text>
     <Text id="title" class="title" style="height:66px">同一份数据，连接预览与交付。</Text>
     <Box id="content" style="display:grid;grid-template-columns:7fr 5fr;gap:40px;height:360px">
-      <Chart id="chart" type="bar" style="height:350px">
+      <Chart id="chart" type="bar" class="chart" data-labels="value" style="height:350px">
         <Labels>第一轮|第二轮|第三轮|第四轮</Labels>
-        <Series name="示例方案 A" color="#09A88F">28 45 63 82</Series>
-        <Series name="示例方案 B" color="#B1D9D1">20 30 48 61</Series>
+        <Series name="示例方案 A">28 45 63 82</Series>
+        <Series name="示例方案 B">20 30 48 61</Series>
       </Chart>
       <Box id="details" style="display:flex;flex-direction:column;gap:20px">
         <Text id="table-title" style="height:40px;font-size:26px;line-height:36px;font-weight:700;color:var(--ink)">交付对象的性质</Text>

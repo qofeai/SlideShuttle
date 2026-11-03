@@ -1578,6 +1578,8 @@ fn custom_paths(n: X<'_, '_>) -> Option<Vec<CustomPath>> {
     }
     (!out.is_empty()).then_some(out)
 }
+/// A native chart as a `<Chart>` with every type and option the language has; anything
+/// else is reported.
 fn chart_source(
     bytes: &[u8],
     id: &str,
@@ -1587,69 +1589,311 @@ fn chart_source(
 ) -> Result<String> {
     let doc = parse_xml(bytes)?;
     let root = doc.root_element();
-    let kind = if root
-        .descendants()
-        .any(|n| n.tag_name().name() == "barChart")
-    {
-        "bar"
-    } else if root
-        .descendants()
-        .any(|n| n.tag_name().name() == "lineChart")
-    {
-        "line"
-    } else {
-        return Err(invalid("unsupported chart type on import"));
+    fn named<'a, 'i>(n: X<'a, 'i>, name: &str) -> Option<X<'a, 'i>> {
+        n.children().find(|c| c.tag_name().name() == name)
+    }
+    let val = |n: X<'_, '_>, name: &str| {
+        n.children()
+            .find(|c| c.tag_name().name() == name)
+            .map(|c| c.attribute("val").unwrap_or("1").to_owned())
     };
-    let mut labels = Vec::new();
-    let mut series = String::new();
-    for s in root.descendants().filter(|n| n.tag_name().name() == "ser") {
-        let field = |name: &str| s.children().find(|n| n.tag_name().name() == name);
-        let values = |n: X<'_, '_>| {
-            n.descendants()
-                .filter(|n| n.tag_name().name() == "v")
-                .filter_map(|n| n.text())
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
+    let on = |n: X<'_, '_>, name: &str| val(n, name).is_some_and(|v| v == "1" || v == "true");
+    let chart = named(root, "chart").ok_or_else(|| invalid("chart part has no chart"))?;
+    let plot = named(chart, "plotArea").ok_or_else(|| invalid("chart has no plot area"))?;
+    let mut groups = Vec::new();
+    for g in plot.children().filter(|g| g.is_element()) {
+        let kind = match g.tag_name().name() {
+            "barChart" => ChartType::Bar,
+            "lineChart" => ChartType::Line,
+            "areaChart" => ChartType::Area,
+            "pieChart" => ChartType::Pie,
+            "doughnutChart" => ChartType::Doughnut,
+            "scatterChart" => ChartType::Scatter,
+            other if other.ends_with("Chart") => {
+                return Err(invalid(format!("{other} charts are not reconstructed")));
+            }
+            _ => continue,
         };
-        if labels.is_empty()
-            && let Some(n) = field("cat")
-        {
-            labels = values(n);
-        }
-        let name = field("tx")
-            .map(values)
-            .and_then(|v| v.first().cloned())
-            .unwrap_or("Series".into());
-        let nums = field("val").map(values).unwrap_or_default();
-        let color = s
-            .children()
-            .find(|n| n.tag_name().name() == "spPr")
-            .and_then(|n| {
-                styles.theme.fill(
-                    if kind == "line" {
-                        child(n, A, "ln").unwrap_or(n)
-                    } else {
-                        n
-                    },
-                    None,
-                    problems,
-                )
-            })
-            .map(colors::color_hex)
-            .unwrap_or("2563EB".into());
-        series.push_str(&format!(
-            "<Series name=\"{}\" color=\"#{color}\">{}</Series>",
-            xml(&name),
-            xml(&nums.join(" "))
+        groups.push((kind, g));
+    }
+    let &(kind, base) = groups.first().ok_or_else(|| invalid("chart has no data"))?;
+    if groups.len() > 1
+        && groups
+            .iter()
+            .any(|(k, _)| !matches!(k, ChartType::Bar | ChartType::Line | ChartType::Area))
+    {
+        return Err(invalid(
+            "pie, doughnut and scatter combinations are not reconstructed",
         ));
     }
+    let axes_of = |g: X<'_, '_>| {
+        g.children()
+            .filter(|c| c.tag_name().name() == "axId")
+            .filter_map(|c| c.attribute("val").map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+    if groups.iter().any(|(_, g)| axes_of(*g) != axes_of(base)) {
+        problems.insert("chart secondary axis is drawn on the primary axis".into());
+    }
+    let accent = |i: usize, problems: &mut Problems| {
+        styles
+            .theme
+            .element("clrScheme")
+            .and_then(|s| child(s, A, &format!("accent{}", i % 6 + 1)))
+            .and_then(|a| styles.theme.color_child(a, None, problems))
+            .unwrap_or(crate::chart::PALETTE[i % crate::chart::PALETTE.len()])
+    };
+    // Cached points by index; a blank point becomes 0.
+    let points = |n: Option<X<'_, '_>>, problems: &mut Problems| -> Vec<String> {
+        let Some(n) = n else { return Vec::new() };
+        let count = n
+            .descendants()
+            .find(|c| c.tag_name().name() == "ptCount")
+            .and_then(|c| c.attribute("val")?.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(100);
+        let mut out = vec![None; count];
+        for pt in n.descendants().filter(|c| c.tag_name().name() == "pt") {
+            if let Some(i) = pt.attribute("idx").and_then(|v| v.parse::<usize>().ok())
+                && i < count
+            {
+                out[i] = named(pt, "v").and_then(|v| v.text()).map(str::to_owned);
+            }
+        }
+        if out.iter().any(Option::is_none) {
+            problems.insert("blank chart points become 0".into());
+        }
+        out.into_iter().map(|v| v.unwrap_or("0".into())).collect()
+    };
+    let mut categories = Vec::new();
+    let mut series = String::new();
+    let mut names = Vec::new();
+    let (mut smooth, mut markers) = (false, false);
+    for &(k, g) in &groups {
+        for s in g.children().filter(|c| c.tag_name().name() == "ser") {
+            let (cat, values) = if k == ChartType::Scatter {
+                (named(s, "xVal"), named(s, "yVal"))
+            } else {
+                (named(s, "cat"), named(s, "val"))
+            };
+            if categories.is_empty() {
+                categories = points(cat, problems);
+            }
+            let values = points(values, problems);
+            let name = named(s, "tx")
+                .and_then(|t| t.descendants().find(|c| c.tag_name().name() == "v"))
+                .and_then(|v| v.text())
+                .unwrap_or("Series")
+                .to_owned();
+            let paint = |n: X<'_, '_>, problems: &mut Problems| {
+                named(n, "spPr").and_then(|sp| {
+                    let target = if matches!(k, ChartType::Line) {
+                        child(sp, A, "ln")?
+                    } else {
+                        sp
+                    };
+                    styles.theme.fill(target, None, problems)
+                })
+            };
+            let colors = if k.is_round() {
+                let mut colors = (0..values.len())
+                    .map(|j| accent(j, problems))
+                    .collect::<Vec<_>>();
+                for pt in s.children().filter(|c| c.tag_name().name() == "dPt") {
+                    if let Some(j) = val(pt, "idx").and_then(|v| v.parse::<usize>().ok())
+                        && j < colors.len()
+                        && let Some(c) = paint(pt, problems)
+                    {
+                        colors[j] = c;
+                    }
+                }
+                format!(
+                    " colors=\"{}\"",
+                    colors
+                        .iter()
+                        .map(|c| format!("#{}", color_hex(*c)))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            } else {
+                let c = paint(s, problems).unwrap_or_else(|| accent(names.len(), problems));
+                format!(" color=\"#{}\"", color_hex(c))
+            };
+            if k == ChartType::Line {
+                smooth |= on(s, "smooth");
+                let symbol = named(s, "marker").and_then(|m| val(m, "symbol"));
+                markers |= match symbol.as_deref() {
+                    Some("none") => false,
+                    Some(_) => true,
+                    None => on(g, "marker"),
+                };
+            }
+            if k == ChartType::Scatter
+                && named(s, "spPr")
+                    .and_then(|sp| child(sp, A, "ln"))
+                    .is_none_or(|ln| child(ln, A, "noFill").is_none())
+                && !matches!(val(g, "scatterStyle").as_deref(), Some("marker" | "none"))
+            {
+                problems.insert("scatter chart lines are not reconstructed".into());
+            }
+            let own = if k != kind {
+                format!(
+                    " type=\"{}\"",
+                    serde_json::to_value(k)?.as_str().unwrap_or("bar")
+                )
+            } else {
+                String::new()
+            };
+            series.push_str(&format!(
+                "<Series name=\"{}\"{own}{colors}>{}</Series>",
+                xml(&name),
+                xml(&values.join(" "))
+            ));
+            names.push(name);
+        }
+    }
+    let mut attrs = format!(
+        " type=\"{}\"",
+        serde_json::to_value(kind)?.as_str().unwrap_or("bar")
+    );
+    let mut add = |k: &str, v: &str| attrs.push_str(&format!(" {k}=\"{}\"", xml(v)));
+    if kind == ChartType::Bar && val(base, "barDir").as_deref() == Some("bar") {
+        add("orient", "horizontal");
+    }
+    let stack = match val(base, "grouping").as_deref() {
+        Some("stacked") => "normal",
+        Some("percentStacked") => "percent",
+        _ => "none",
+    };
+    if stack != "none" {
+        add("stack", stack);
+    }
+    let round = kind.is_round();
+    let legend = named(chart, "legend").map(|l| match val(l, "legendPos").as_deref() {
+        Some("b") => "bottom",
+        Some("t") => "top",
+        Some("l") => "left",
+        _ => "right",
+    });
+    if legend != (round || names.len() > 1).then_some("bottom") {
+        add("legend", legend.unwrap_or("none"));
+    }
+    let labels = plot
+        .descendants()
+        .filter(|n| n.tag_name().name() == "dLbls" && !on(*n, "delete"))
+        .find_map(|d| {
+            if on(d, "showPercent") {
+                Some("percent")
+            } else if on(d, "showCatName") {
+                Some("category")
+            } else if on(d, "showVal") {
+                Some("value")
+            } else {
+                None
+            }
+        });
+    let area = groups.iter().any(|(k, _)| *k == ChartType::Area);
+    match labels {
+        Some(l) if area || !round && l != "value" => {
+            problems.insert(format!(
+                "chart data labels ({l}) are not reconstructed here"
+            ));
+        }
+        Some(l) => add("data-labels", l),
+        None => {}
+    }
+    // The value axis: the scatter y axis, or the one beside the categories.
+    let value_axis = plot.children().find(|a| {
+        a.tag_name().name() == "valAx"
+            && (kind != ChartType::Scatter
+                || matches!(val(*a, "axPos").as_deref(), Some("l" | "r")))
+    });
+    let mut format = None;
+    if let Some(ax) = value_axis {
+        if stack != "percent" {
+            let scaling = named(ax, "scaling");
+            for (k, v) in [
+                ("min", scaling.and_then(|s| val(s, "min"))),
+                ("max", scaling.and_then(|s| val(s, "max"))),
+                ("step", val(ax, "majorUnit")),
+            ] {
+                if let Some(v) = v {
+                    add(k, &v);
+                }
+            }
+            format = named(ax, "numFmt")
+                .filter(|f| f.attribute("sourceLinked") != Some("1"))
+                .and_then(|f| f.attribute("formatCode"));
+        }
+        if named(ax, "majorGridlines").is_none() {
+            add("grid", "false");
+        }
+    }
+    let format = format.or_else(|| {
+        plot.descendants()
+            .find(|n| n.tag_name().name() == "dLbls")
+            .and_then(|d| named(d, "numFmt"))
+            .and_then(|f| f.attribute("formatCode"))
+            .filter(|_| labels == Some("value"))
+    });
+    if let Some(f) = format.filter(|f| !f.eq_ignore_ascii_case("general")) {
+        if crate::chart::format_value(0.0, f).is_ok() {
+            add("format", f);
+        } else {
+            problems.insert(format!("chart number format {f} is not reconstructed"));
+        }
+    }
+    if let Some(t) = named(chart, "title") {
+        let text = t
+            .descendants()
+            .filter(|n| n.tag_name().name() == "t")
+            .filter_map(|n| n.text())
+            .collect::<String>();
+        // A title without its own text shows the only series' name.
+        let text = match names.as_slice() {
+            [only] if text.is_empty() => only.clone(),
+            _ => text,
+        };
+        if !text.trim().is_empty() {
+            add("title", &text);
+        }
+    }
+    if smooth {
+        add("smooth", "true");
+    }
+    if markers {
+        add("markers", "true");
+    }
+    if categories.iter().any(|c| c.contains('|')) {
+        problems.insert("'|' in chart labels becomes '/'".into());
+    }
+    let mut css = styles.standalone_text(named(root, "txPr").unwrap_or(root), problems);
+    if let Some(sp) = named(root, "spPr") {
+        if let Some(c) = styles.theme.fill(sp, None, problems).filter(|c| c.3 > 0) {
+            css.insert("fill".into(), json!(color_hex(c)));
+        }
+        if let Some(ln) = child(sp, A, "ln")
+            && let Some(c) = styles.theme.fill(ln, None, problems).filter(|c| c.3 > 0)
+        {
+            css.insert("stroke".into(), json!(color_hex(c)));
+            css.insert(
+                "strokeWidth".into(),
+                json!(
+                    ln.attribute("w")
+                        .and_then(|w| w.parse::<u64>().ok())
+                        .unwrap_or(9525)
+                ),
+            );
+        }
+    }
     Ok(format!(
-        "<Chart id=\"{id}\" type=\"{kind}\" style=\"{pos};{}\"><Labels>{}</Labels>{series}</Chart>",
-        xml(&style_css(
-            &Value::Object(styles.standalone_text(root, problems)),
-            false
-        )),
-        xml(&labels.join("|"))
+        "<Chart id=\"{id}\"{attrs} style=\"{pos};{}\"><Labels>{}</Labels>{series}</Chart>",
+        xml(&style_css(&Value::Object(css), false)),
+        xml(&categories
+            .iter()
+            .map(|c| c.replace('|', "/"))
+            .collect::<Vec<_>>()
+            .join("|"))
     ))
 }
 

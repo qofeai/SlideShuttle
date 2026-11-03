@@ -743,12 +743,18 @@ fn chart_labels_that_do_not_fit_are_errors() {
     ))
     .unwrap();
     let s = layout(&d, &resources()).unwrap();
+    let overflow = s
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == "chart_label_overflow")
+        .collect::<Vec<_>>();
+    assert_eq!(overflow.len(), 1, "{overflow:?}");
+    assert_eq!(overflow[0].node_id, "c");
     assert!(
-        s.diagnostics
-            .iter()
-            .any(|d| d.code == "chart_label_overflow" && d.node_id == "c/label/0")
+        overflow[0]
+            .message
+            .contains("An extremely long category label")
     );
-    assert!(!s.diagnostics.iter().any(|d| d.node_id == "c/label/1"));
 }
 #[test]
 fn missing_fonts_and_glyphs_are_errors() {
@@ -904,6 +910,74 @@ fn tables_charts_workbook_and_groups_are_real_objects() {
     let imp = import::import_pptx(&b).unwrap();
     let d = parse_files("deck.xml", &imp.files).unwrap();
     assert!(!layout(&d, &resources).unwrap().has_errors());
+}
+#[test]
+fn every_chart_type_is_a_native_chart_and_round_trips() {
+    let body = r##"<Box id="g" style="width:640px;height:340px;display:grid;grid-template-columns:200px 200px 200px;gap:20px;font-size:10px">
+<Chart id="h" orient="horizontal" stack="normal" data-labels="value" legend="right" format="0.0" style="height:160px"><Labels>A|B</Labels><Series name="X">1 2</Series><Series name="Y">3 4</Series></Chart>
+<Chart id="combo" title="T" min="0" max="10" step="5" grid="false" smooth="true" markers="true" style="height:160px"><Labels>A|B|C</Labels><Series name="X">1 2 3</Series><Series name="Y" type="line" color="#111111">3 1 2</Series></Chart>
+<Chart id="area" type="area" stack="percent" style="height:160px"><Labels>A|B</Labels><Series name="X">1 2</Series><Series name="Y">3 4</Series></Chart>
+<Chart id="ring" type="doughnut" data-labels="percent" style="height:160px;chart-colors:#FF0000 #00FF00"><Labels>A|B|C</Labels><Series name="X">1 2 3</Series></Chart>
+<Chart id="xy" type="scatter" data-labels="value" style="height:160px;background:#F1F5F9"><Labels>1|2.5|4</Labels><Series name="X">3 5 4</Series></Chart>
+</Box>"##;
+    let (_, r, s, b) = compile(&doc(body));
+    let parts = zip_read(&b);
+    let part =
+        |n: usize| String::from_utf8(parts[&format!("ppt/charts/chart{n}.xml")].clone()).unwrap();
+    for (n, native) in [
+        (1, r#"<c:barDir val="bar"/><c:grouping val="stacked"/>"#),
+        (1, r#"<c:orientation val="maxMin"/>"#),
+        (1, r#"<c:numFmt formatCode="0.0" sourceLinked="0"/>"#),
+        (1, r#"<c:legendPos val="r"/>"#),
+        (
+            2,
+            r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>"#,
+        ),
+        (2, r#"<c:smooth val="1"/>"#),
+        (2, r#"<c:symbol val="circle"/>"#),
+        (2, r#"<c:max val="10"/><c:min val="0"/>"#),
+        (2, r#"<c:majorUnit val="5"/>"#),
+        (2, "<c:title>"),
+        (3, r#"<c:areaChart><c:grouping val="percentStacked"/>"#),
+        (4, r#"<c:holeSize val="50"/>"#),
+        (4, r#"<c:showPercent val="1"/>"#),
+        (5, "<c:xVal>"),
+        (5, r#"<c:layoutTarget val="inner"/>"#),
+    ] {
+        assert!(part(n).contains(native), "chart{n}: {native}");
+    }
+    assert!(!part(2).contains("<c:majorGridlines>"));
+    // chart-colors cycles: the third slice takes the first color again.
+    assert_eq!(part(4).matches(r#"<a:srgbClr val="FF0000">"#).count(), 2);
+    let imported = import::import_pptx(&b).unwrap();
+    assert!(
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r).unwrap();
+    assert!(!again.has_errors(), "{:?}", again.diagnostics);
+    assert_eq!(
+        render::render_png(&again, 0, &r, 1.0).unwrap(),
+        render::render_png(&s, 0, &r, 1.0).unwrap(),
+        "export → import must reproduce the same page"
+    );
+}
+#[test]
+fn chart_options_that_do_not_apply_are_errors() {
+    for chart in [
+        r#"<Chart id="c" type="pie"><Labels>A</Labels><Series name="X">1</Series><Series name="Y">1</Series></Chart>"#,
+        r#"<Chart id="c" type="line" orient="horizontal"><Labels>A</Labels><Series name="X">1</Series></Chart>"#,
+        r#"<Chart id="c" data-labels="percent"><Labels>A</Labels><Series name="X">1</Series></Chart>"#,
+        r#"<Chart id="c" type="line" stack="normal"><Labels>A</Labels><Series name="X">1</Series></Chart>"#,
+        r#"<Chart id="c" type="pie"><Labels>A|B</Labels><Series name="X">1 -1</Series></Chart>"#,
+        r#"<Chart id="c" type="scatter"><Labels>A</Labels><Series name="X">1</Series></Chart>"#,
+        r#"<Chart id="c" format="yyyy"><Labels>A</Labels><Series name="X">1</Series></Chart>"#,
+        r#"<Chart id="c" smooth="true"><Labels>A</Labels><Series name="X">1</Series></Chart>"#,
+        r#"<Chart id="c" type="pie" min="0"><Labels>A</Labels><Series name="X">1</Series></Chart>"#,
+    ] {
+        assert!(parse(&doc(chart)).is_err(), "{chart}");
+    }
 }
 #[test]
 fn images_are_resources_and_stay_images() {

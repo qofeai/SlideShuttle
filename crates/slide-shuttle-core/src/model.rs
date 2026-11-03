@@ -124,11 +124,7 @@ pub enum Kind {
         /// Column width ratios.
         columns: Vec<f32>,
     },
-    Chart {
-        chart_type: ChartType,
-        labels: Vec<String>,
-        series: Vec<Series>,
-    },
+    Chart(Box<Chart>),
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -182,6 +178,69 @@ impl ShapeKind {
 pub enum ChartType {
     Bar,
     Line,
+    Area,
+    Pie,
+    Doughnut,
+    Scatter,
+}
+impl ChartType {
+    /// Pie and doughnut charts have slices instead of axes.
+    pub fn is_round(self) -> bool {
+        matches!(self, Self::Pie | Self::Doughnut)
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stack {
+    None,
+    Normal,
+    Percent,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataLabels {
+    None,
+    Value,
+    Percent,
+    Category,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+/// Value axis range and tick spacing.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Axis {
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+}
+/// A data chart; layout resolves the palette and the axes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Chart {
+    pub kind: ChartType,
+    /// Bars run left to right, first category on top.
+    pub horizontal: bool,
+    pub stack: Stack,
+    /// Category names; numeric x values for scatter charts.
+    pub categories: Vec<String>,
+    pub series: Vec<Series>,
+    pub legend: Option<Side>,
+    pub data_labels: DataLabels,
+    /// Value axis bounds and tick spacing; automatic when left out.
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+    /// Excel number format for axis and data labels.
+    pub format: String,
+    pub grid: bool,
+    pub title: Option<String>,
+    pub smooth: bool,
+    pub markers: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -302,7 +361,10 @@ pub struct Span {
 pub struct Series {
     pub name: String,
     pub values: Vec<f64>,
-    pub color: String,
+    /// Bar, line or area within a combo chart; otherwise the chart's type.
+    pub kind: ChartType,
+    /// One series color, or one per slice in pie and doughnut charts; empty uses the palette.
+    pub colors: Vec<Color>,
 }
 
 #[derive(Clone, Debug)]
@@ -587,9 +649,16 @@ pub enum Draw {
         cells: Vec<Item>,
     },
     Chart {
-        chart_type: ChartType,
-        labels: Vec<String>,
-        series: Vec<Series>,
+        /// The chart with every series color resolved.
+        chart: Box<Chart>,
+        /// Value axis, and the x axis of a scatter chart.
+        axis: Option<Axis>,
+        x_axis: Option<Axis>,
+        /// Plot area (inside the axes), legend and title boxes, for native Office layout.
+        plot: Rect,
+        legend: Option<Rect>,
+        title: Option<Rect>,
+        /// What PNG/PDF paint.
         primitives: Vec<Item>,
     },
 }

@@ -58,9 +58,9 @@ deck/
 | `Shape` | `shape` 为 187 种 OOXML 预设之一（默认 rect），如 triangle、rightArrow、star5、wedgeRoundRectCallout、bentConnector3；`adjust` 为预设调整值。完整列表与默认值见 [预设形状](SHAPES.md) 或 `slide-shuttle shapes` |
 | `Path` | `d` 为完整 SVG 路径语法（相对命令、H/V、S/T、Q、A 弧线均可）；`viewBox="100 100"` 为逻辑宽高 |
 | `Table` | `Row` 内 `Cell`；`columns="2 1"` 为列宽比例；单元格可含富文本与列表、`colspan` / `rowspan`；样式按 表格 → 行 → 单元格 继承，见下文“表格” |
-| `Chart` | `type="bar|line"`；`Labels` 用 `|` 分隔；`Series name="…" color="#…"` 内空格分隔有限数值；最多 8 系列、100 分类 |
+| `Chart` | `type="bar|line|area|pie|doughnut|scatter"`；`Labels` 用 `|` 分隔；`Series name="…"` 内空格分隔有限数值；最多 8 系列、100 分类；选项见“图表” |
 
-表格和图表同时支持本地预览与原生 PPTX。图表导出缓存数值以及嵌入的 `.xlsx` 工作簿。当前 Office 图表使用自身坐标轴/图例排版，与本地预览的几何不保证一致。
+表格和图表同时支持本地预览与原生 PPTX。图表导出缓存数值以及嵌入的 `.xlsx` 工作簿，并固定绘图区、图例、标题位置和坐标轴刻度，Office 中与预览排版一致。
 
 ## 布局属性
 
@@ -88,7 +88,7 @@ deck/
 
 完全空的 Text/Span 内容不产生行框，文字测量为 0×0、0 行；显式尺寸、背景和边框仍按盒子布局保留。明确输入的空格或换行属于内容，仍可占据行距。PPTX 导入中的纯空文本容器不会把线条/形状转成文字，空占位符也不会凭空增加一行。
 
-`check` 报告文本溢出、页面越界、图表刻度/类别标签/图例超出槽位或图表，以及缩窄 3% 后换行高度超过容器的紧排版警告。错误阻止渲染和导出。目前不对所有物体重叠作审美或遮挡判定，尚未实现自动区域冻结和碰撞修复。装饰性重叠由作者自行设计。
+`check` 报告文本溢出、页面越界、图表类别标签宽于所在分类或图表文字超出图表，以及缩窄 3% 后换行高度超过容器的紧排版警告。错误阻止渲染和导出。目前不对所有物体重叠作审美或遮挡判定，尚未实现自动区域冻结和碰撞修复。装饰性重叠由作者自行设计。
 
 0.2.0 导出 PPTX 时，未指定宽度或宽度 auto、采用内在宽度且没有软折行的紧标签禁用软折行，避免接收端在末尾拆出单个字母；显式宽度正文维持换行。`white-space:nowrap` 也输出禁用软折行。已有显式换行不会因此删除。这项策略不能保证所有 Office 渲染器的字形和文字边界相同。
 
@@ -111,6 +111,29 @@ deck/
 - Table 的 `border` 是默认网格线（不写时为 1px #D2D9E3，`border:0 solid #000` 去掉），`background` 铺在单元格下面。
 - 相邻单元格的公共边只画一条：明确设置的边框优先于默认网格，其次取更宽者，再其次取上方或左侧单元格的；PPTX 写入的也是同一结果。
 - PPTX 为原生表格（`gridSpan` / `rowSpan` / `hMerge` / `vMerge`、逐格边距、对齐、填充与四边边框）；导入时同样还原，表格主题样式除外。
+
+## 图表
+
+```xml
+<Style name="chart">font-size:16px;color:#536B78;chart-colors:var(--accent) #9B6B32 #6C8290</Style>
+…
+<Chart id="revenue" class="chart" title="季度营收" data-labels="value" format="#,##0&quot;万&quot;" style="height:360px">
+  <Labels>Q1|Q2|Q3|Q4</Labels>
+  <Series name="收入">1200 1800 1500 2600</Series>
+  <Series name="成本" type="line">900 1100 1300 1500</Series>
+</Chart>
+```
+
+- `type`：`bar`（默认，`orient="horizontal"` 为条形图，首个分类在上）、`line`、`area`、`pie`、`doughnut`、`scatter`。散点图的 `Labels` 是数值 x。
+- 组合图：bar / line / area 图表里，Series 用 `type` 换成另外两种；横向条形图不能组合。
+- `stack="normal|percent"`：bar / area 图表中与图表同类型的系列堆叠；`percent` 坐标轴固定 0–100% 且不能组合，值不能为负。
+- `legend="auto|top|right|bottom|left|none"`：`auto` 在多系列或饼图/环形图时放底部，单系列不显示。
+- `data-labels="value"`；饼图/环形图另有 `percent`、`category`。面积系列不支持数据标签。柱内与扇区内的标签自动选黑或白。
+- 数值轴 `min` / `max` / `step` 可选，缺省取整到 1、2、2.5、5 × 10ⁿ 并保证刻度不挤；bar / line / area 默认包含 0，需要放大差异时设 `min`。散点图两轴都按数据范围。
+- `format` 是 Excel 数字格式的子集：`0`、`0.0`、`#,##0.00`、`0%`、`0.##`，以及引号内或 `$`、`¥` 等前后缀，用于坐标轴和数据标签。
+- `grid="false"` 去掉网格线；`title="…"` 加粗标题；`smooth="true"`、`markers="true"` 只用于含折线系列的图表。
+- 颜色：Series `color`（饼图/环形图用 `colors`，每个扇区一个）；缺省按 `chart-colors`（可放进 Style，跨页一致）循环取色，再缺省为内置 8 色。文字颜色、字号和字体继承自普通文字样式，网格线与坐标轴线由文字颜色淡化得出；`background` 与实线 `border` 作为图表区底色与边框。
+- 导入时还原上述全部类型和选项；三维、股价、雷达等其它图表类型、次坐标轴、散点连线和趋势线会作为损失报告。
 
 ## 富文本
 

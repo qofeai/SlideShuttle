@@ -3,10 +3,10 @@
     <Text id="kicker" class="kicker">02 / GIVE EVIDENCE ENOUGH ROOM</Text>
     <Text id="title" class="heading">让证据占据足够大的位置。</Text>
     <Box id="grid" style="display:grid;grid-template-columns:7fr 5fr;gap:48px;height:390px">
-      <Chart id="chart" type="bar" style="height:380px">
+      <Chart id="chart" type="bar" class="chart" data-labels="value" style="height:380px">
         <Labels>阶段一|阶段二|阶段三|阶段四</Labels>
-        <Series name="示例 A" color="#087E6D">24 40 62 80</Series>
-        <Series name="示例 B" color="#9B6B32">18 32 48 64</Series>
+        <Series name="示例 A">24 40 62 80</Series>
+        <Series name="示例 B">18 32 48 64</Series>
       </Chart>
       <Box id="caption" style="display:flex;flex-direction:column;gap:18px;padding:12px 0">
         <Text id="sample" style="height:32px;font-size:18px;line-height:30px;color:var(--accent)">演示数据 / 非真实测量</Text>

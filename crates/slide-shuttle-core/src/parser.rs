@@ -57,6 +57,7 @@ const PROPS: &[&str] = &[
     "border-color",
     "border-radius",
     "opacity",
+    "chart-colors",
     "object-fit",
     "object-position",
     "box-sizing",
@@ -611,7 +612,21 @@ impl<'a> Context<'a> {
             "Shape" => &["shape", "adjust"],
             "Path" => &["d", "viewBox"],
             "Table" => &["columns"],
-            "Chart" => &["type"],
+            "Chart" => &[
+                "type",
+                "orient",
+                "stack",
+                "legend",
+                "data-labels",
+                "min",
+                "max",
+                "step",
+                "format",
+                "grid",
+                "title",
+                "smooth",
+                "markers",
+            ],
             _ => &[],
         });
         attrs(n, &allowed)?;
@@ -655,54 +670,7 @@ impl<'a> Context<'a> {
                 let (rows, columns) = self.table(n, params)?;
                 Kind::Table { rows, columns }
             }
-            "Chart" => {
-                let chart_type: ChartType =
-                    keyword(n.attribute("type").unwrap_or("bar"), "Chart type")?;
-                let mut labels = Vec::new();
-                let mut series = Vec::new();
-                for c in n.children().filter(|x| x.is_element()) {
-                    match c.tag_name().name() {
-                        "Labels" => {
-                            attrs(c, &[])?;
-                            labels = plain(c).split('|').map(|s| s.trim().to_owned()).collect();
-                        }
-                        "Series" => {
-                            attrs(c, &["name", "color"])?;
-                            let values = plain(c)
-                                .split_whitespace()
-                                .map(|s| {
-                                    s.parse::<f64>()
-                                        .map_err(|_| invalid("invalid chart number"))
-                                })
-                                .collect::<Result<Vec<_>>>()?;
-                            series.push(Series {
-                                name: required(c, "name")?.into(),
-                                values,
-                                color: c.attribute("color").unwrap_or("#2563EB").into(),
-                            });
-                        }
-                        _ => return Err(invalid("Chart requires Labels and Series")),
-                    }
-                }
-                if labels.is_empty()
-                    || series.is_empty()
-                    || series.len() > 8
-                    || labels.len() > 100
-                    || series.iter().any(|s| {
-                        s.values.len() != labels.len() || s.values.iter().any(|v| !v.is_finite())
-                    })
-                {
-                    return Err(invalid("invalid chart data dimensions"));
-                }
-                for s in &series {
-                    Color::parse(&s.color)?;
-                }
-                Kind::Chart {
-                    chart_type,
-                    labels,
-                    series,
-                }
-            }
+            "Chart" => Kind::Chart(Box::new(chart(n, params)?)),
             _ => return Err(invalid(format!("unknown element <{tag}>"))),
         };
         let children = if matches!(kind, Kind::Box | Kind::Group) {
@@ -1147,6 +1115,211 @@ fn shape_kind(n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<ShapeKi
     Ok(ShapeKind {
         preset: preset.into(),
         adjust,
+    })
+}
+fn chart(n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<Chart> {
+    let get = |k: &str| n.attribute(k).map(|v| substitute(v, params)).transpose();
+    let flag = |k: &str, default: bool| -> Result<bool> {
+        match get(k)?.as_deref() {
+            None => Ok(default),
+            Some("false") => Ok(false),
+            Some("true") => Ok(true),
+            Some(v) => Err(invalid(format!("Chart {k} must be true or false, not {v}"))),
+        }
+    };
+    let number = |k: &str| -> Result<Option<f64>> {
+        get(k)?
+            .map(|v| {
+                v.trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|x| x.is_finite())
+                    .ok_or_else(|| invalid(format!("Chart {k} must be a number")))
+            })
+            .transpose()
+    };
+    let kind: ChartType = keyword(get("type")?.as_deref().unwrap_or("bar"), "Chart type")?;
+    let mut categories = Vec::new();
+    let mut series = Vec::new();
+    for c in n.children().filter(|x| x.is_element()) {
+        match c.tag_name().name() {
+            "Labels" => {
+                attrs(c, &[])?;
+                categories = substitute(&plain(c), params)?
+                    .split('|')
+                    .map(|s| s.trim().to_owned())
+                    .collect();
+            }
+            "Series" => {
+                attrs(c, &["name", "color", "colors", "type"])?;
+                let values = substitute(&plain(c), params)?
+                    .split_whitespace()
+                    .map(|s| {
+                        s.parse::<f64>()
+                            .ok()
+                            .filter(|v| v.is_finite())
+                            .ok_or_else(|| invalid(format!("invalid chart number {s}")))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let own: Option<ChartType> = c
+                    .attribute("type")
+                    .map(|v| keyword(v, "Series type"))
+                    .transpose()?;
+                if let Some(t) = own
+                    && (!matches!(kind, ChartType::Bar | ChartType::Line | ChartType::Area)
+                        || !matches!(t, ChartType::Bar | ChartType::Line | ChartType::Area))
+                {
+                    return Err(invalid(
+                        "Series type combines bar, line and area series in a bar, line or area chart",
+                    ));
+                }
+                let colors = match (c.attribute("color"), c.attribute("colors")) {
+                    (Some(_), Some(_)) => {
+                        return Err(invalid("a Series takes color or colors, not both"));
+                    }
+                    (Some(v), None) if !kind.is_round() => {
+                        vec![Color::parse(&substitute(v, params)?)?]
+                    }
+                    (None, Some(v)) if kind.is_round() => substitute(v, params)?
+                        .split_whitespace()
+                        .map(Color::parse)
+                        .collect::<Result<Vec<_>>>()?,
+                    (None, None) => Vec::new(),
+                    _ => {
+                        return Err(invalid(
+                            "pie and doughnut Series take colors (one per slice); other Series take color",
+                        ));
+                    }
+                };
+                series.push(Series {
+                    name: substitute(required(c, "name")?, params)?,
+                    values,
+                    kind: own.unwrap_or(kind),
+                    colors,
+                });
+            }
+            _ => return Err(invalid("Chart contains Labels and Series")),
+        }
+    }
+    let round = kind.is_round();
+    let has = |t: ChartType| series.iter().any(|s| s.kind == t);
+    let rule = |ok: bool, message: &str| if ok { Ok(()) } else { Err(invalid(message)) };
+    rule(
+        !categories.is_empty() && categories.len() <= 100,
+        "a Chart needs 1 to 100 Labels",
+    )?;
+    rule(
+        !series.is_empty() && series.len() <= 8,
+        "a Chart needs 1 to 8 Series",
+    )?;
+    rule(
+        series.iter().all(|s| s.values.len() == categories.len()),
+        "every Series needs one value per label",
+    )?;
+    rule(
+        !round || series.len() == 1,
+        "pie and doughnut charts take one Series",
+    )?;
+    rule(
+        series
+            .iter()
+            .all(|s| s.colors.len() <= 1 || s.colors.len() == categories.len()),
+        "colors needs one color per slice",
+    )?;
+    if kind == ChartType::Scatter {
+        rule(
+            categories
+                .iter()
+                .all(|c| c.parse::<f64>().is_ok_and(f64::is_finite)),
+            "scatter chart Labels are numeric x values",
+        )?;
+    }
+    let horizontal = match get("orient")?.as_deref() {
+        None | Some("vertical") => false,
+        Some("horizontal") => true,
+        Some(v) => {
+            return Err(invalid(format!(
+                "Chart orient must be vertical or horizontal, not {v}"
+            )));
+        }
+    };
+    rule(
+        !horizontal || series.iter().all(|s| s.kind == ChartType::Bar),
+        "orient=\"horizontal\" is for bar charts without line or area series",
+    )?;
+    let stack: Stack = keyword(get("stack")?.as_deref().unwrap_or("none"), "Chart stack")?;
+    rule(
+        stack == Stack::None || matches!(kind, ChartType::Bar | ChartType::Area),
+        "stack is for bar and area charts",
+    )?;
+    let negative = series.iter().flat_map(|s| &s.values).any(|v| *v < 0.0);
+    rule(
+        !negative || !round && stack != Stack::Percent,
+        "pie, doughnut and percent-stacked values cannot be negative",
+    )?;
+    rule(
+        !round || series[0].values.iter().sum::<f64>() > 0.0,
+        "pie and doughnut values need a positive total",
+    )?;
+    let legend = match get("legend")?.as_deref() {
+        None | Some("auto") => (round || series.len() > 1).then_some(Side::Bottom),
+        Some("none") => None,
+        Some(v) => Some(keyword(v, "Chart legend")?),
+    };
+    let data_labels: DataLabels = keyword(
+        get("data-labels")?.as_deref().unwrap_or("none"),
+        "Chart data-labels",
+    )?;
+    rule(
+        round || !matches!(data_labels, DataLabels::Percent | DataLabels::Category),
+        "data-labels percent and category are for pie and doughnut charts",
+    )?;
+    rule(
+        data_labels == DataLabels::None || !has(ChartType::Area),
+        "data-labels do not apply to area series",
+    )?;
+    rule(
+        stack != Stack::Percent || series.iter().all(|s| s.kind == kind),
+        "percent stacking cannot mix series types",
+    )?;
+    let (min, max, step) = (number("min")?, number("max")?, number("step")?);
+    rule(
+        !round || min.is_none() && max.is_none() && step.is_none() && get("grid")?.is_none(),
+        "pie and doughnut charts have no axis: min, max, step and grid do not apply",
+    )?;
+    rule(
+        stack != Stack::Percent || min.is_none() && max.is_none() && step.is_none(),
+        "a percent-stacked axis always runs 0% to 100%",
+    )?;
+    rule(
+        min.zip(max).is_none_or(|(a, b)| a < b),
+        "Chart min must be below max",
+    )?;
+    rule(step.is_none_or(|s| s > 0.0), "Chart step must be positive")?;
+    let format = get("format")?.unwrap_or_else(|| "General".into());
+    crate::chart::format_value(0.0, &format)?;
+    let lines = has(ChartType::Line);
+    let (smooth, markers) = (flag("smooth", false)?, flag("markers", false)?);
+    rule(
+        lines || !smooth && !markers,
+        "smooth and markers are for line series",
+    )?;
+    Ok(Chart {
+        kind,
+        horizontal,
+        stack,
+        categories,
+        series,
+        legend,
+        data_labels,
+        min,
+        max,
+        step,
+        format,
+        grid: !round && flag("grid", true)?,
+        title: get("title")?.filter(|t| !t.trim().is_empty()),
+        smooth,
+        markers,
     })
 }
 fn plain(n: X<'_, '_>) -> String {

@@ -101,7 +101,7 @@ fn color(c: Color, opacity: f32) -> String {
         (c.3 as f32 / 255.0 * opacity * 100000.0).round() as u32
     )
 }
-fn fill(c: Color, opacity: f32) -> String {
+pub(crate) fn fill(c: Color, opacity: f32) -> String {
     if c.3 == 0 {
         "<a:noFill/>".into()
     } else {
@@ -521,9 +521,12 @@ fn write_item(
             ..
         } => table(item, ident, (grid, columns, rows), rels)?,
         Draw::Chart {
-            chart_type,
-            labels,
-            series,
+            chart,
+            axis,
+            x_axis,
+            plot,
+            legend,
+            title,
             ..
         } => {
             shared.charts += 1;
@@ -531,12 +534,20 @@ fn write_item(
             let rel = format!("rChart{n}");
             pkg.text(
                 &format!("ppt/charts/chart{n}.xml"),
-                chart_xml(*chart_type, labels, series, &item.text_style),
+                crate::chart::part(
+                    item,
+                    chart,
+                    axis.as_ref(),
+                    x_axis.as_ref(),
+                    *plot,
+                    *legend,
+                    *title,
+                ),
                 "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
             );
             pkg.bytes(
                 &format!("ppt/embeddings/chart{n}.xlsx"),
-                workbook(labels, series)?,
+                crate::chart::workbook(chart)?,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             );
             pkg.relationships(
@@ -887,113 +898,4 @@ fn skeleton(pkg: &mut Package, family: &str) {
     let lines = format!("<a:ln w=\"9525\">{fill}<a:prstDash val=\"solid\"/></a:ln>").repeat(3);
     let effects = "<a:effectStyle><a:effectLst/></a:effectStyle>".repeat(3);
     pkg.text("ppt/theme/theme1.xml",format!("<a:theme xmlns:a=\"{A}\" name=\"Deck\"><a:themeElements><a:clrScheme name=\"Deck\">{colors}</a:clrScheme><a:fontScheme name=\"Deck\"><a:majorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme><a:fmtScheme name=\"Deck\"><a:fillStyleLst>{fills}</a:fillStyleLst><a:lnStyleLst>{lines}</a:lnStyleLst><a:effectStyleLst>{effects}</a:effectStyleLst><a:bgFillStyleLst>{fills}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"),"application/vnd.openxmlformats-officedocument.theme+xml");
-}
-
-fn chart_xml(
-    kind: ChartType,
-    labels: &[String],
-    series: &[Series],
-    text_style: &TextStyle,
-) -> String {
-    let mut ser = String::new();
-    for (i, s) in series.iter().enumerate() {
-        let col = column(i + 1);
-        let end = labels.len() + 1;
-        let color = Color::parse(&s.color).unwrap();
-        let cats = labels
-            .iter()
-            .enumerate()
-            .map(|(i, l)| format!("<c:pt idx=\"{i}\"><c:v>{}</c:v></c:pt>", xml(l)))
-            .collect::<String>();
-        let nums = s
-            .values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| format!("<c:pt idx=\"{i}\"><c:v>{v}</c:v></c:pt>"))
-            .collect::<String>();
-        let shape = if kind == ChartType::Line {
-            format!("<a:ln w=\"28575\">{}</a:ln>", fill(color, 1.0))
-        } else {
-            fill(color, 1.0)
-        };
-        ser.push_str(&format!("<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/><c:tx><c:strRef><c:f>Sheet1!${col}$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>{}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr>{shape}</c:spPr><c:cat><c:strRef><c:f>Sheet1!$A$2:$A${end}</c:f><c:strCache><c:ptCount val=\"{}\"/>{cats}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!${col}$2:${col}${end}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"{}\"/>{nums}</c:numCache></c:numRef></c:val>{}</c:ser>",xml(&s.name),labels.len(),s.values.len(),if kind==ChartType::Line{"<c:smooth val=\"0\"/>"}else{""}));
-    }
-    let plot = if kind == ChartType::Line {
-        format!(
-            "<c:lineChart><c:grouping val=\"standard\"/>{ser}<c:axId val=\"100\"/><c:axId val=\"200\"/></c:lineChart>"
-        )
-    } else {
-        format!(
-            "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/>{ser}<c:gapWidth val=\"80\"/><c:axId val=\"100\"/><c:axId val=\"200\"/></c:barChart>"
-        )
-    };
-    let family = xml(&text_style.family);
-    let text_props = format!(
-        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1050\"><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/></a:defRPr></a:pPr><a:endParaRPr/></a:p></c:txPr>"
-    );
-    format!(
-        "<c:chartSpace xmlns:c=\"{C}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><c:lang val=\"zh-CN\"/><c:chart><c:autoTitleDeleted val=\"1\"/><c:plotArea><c:layout/>{plot}<c:catAx><c:axId val=\"100\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"200\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx><c:valAx><c:axId val=\"200\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"100\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/></c:valAx></c:plotArea><c:legend><c:legendPos val=\"b\"/><c:layout/></c:legend><c:plotVisOnly val=\"1\"/></c:chart>{text_props}<c:externalData r:id=\"rData\"><c:autoUpdate val=\"0\"/></c:externalData></c:chartSpace>"
-    )
-}
-fn column(mut n: usize) -> String {
-    n += 1;
-    let mut s = String::new();
-    while n > 0 {
-        n -= 1;
-        s.insert(0, (b'A' + (n % 26) as u8) as char);
-        n /= 26;
-    }
-    s
-}
-fn workbook(labels: &[String], series: &[Series]) -> Result<Vec<u8>> {
-    let mut pkg = Package::new();
-    let ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-    pkg.relationships(
-        "_rels/.rels",
-        &[(
-            "rWorkbook".into(),
-            format!("{R}/officeDocument"),
-            "xl/workbook.xml".into(),
-        )],
-    );
-    pkg.text("xl/workbook.xml",format!("<workbook xmlns=\"{ns}\" xmlns:r=\"{R}\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rSheet\"/></sheets></workbook>"),"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml");
-    pkg.relationships(
-        "xl/_rels/workbook.xml.rels",
-        &[(
-            "rSheet".into(),
-            format!("{R}/worksheet"),
-            "worksheets/sheet1.xml".into(),
-        )],
-    );
-    let cell = |r: usize, c: usize, value: &str| {
-        format!(
-            "<c r=\"{}{r}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
-            column(c),
-            xml(value)
-        )
-    };
-    let mut rows = String::from("<row r=\"1\">");
-    rows.push_str(&cell(1, 0, "Category"));
-    for (i, s) in series.iter().enumerate() {
-        rows.push_str(&cell(1, i + 1, &s.name));
-    }
-    rows.push_str("</row>");
-    for (i, l) in labels.iter().enumerate() {
-        let r = i + 2;
-        rows.push_str(&format!("<row r=\"{r}\">{}", cell(r, 0, l)));
-        for (j, s) in series.iter().enumerate() {
-            rows.push_str(&format!(
-                "<c r=\"{}{r}\"><v>{}</v></c>",
-                column(j + 1),
-                s.values[i]
-            ));
-        }
-        rows.push_str("</row>");
-    }
-    pkg.text(
-        "xl/worksheets/sheet1.xml",
-        format!("<worksheet xmlns=\"{ns}\"><sheetData>{rows}</sheetData></worksheet>"),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
-    );
-    pkg.finish()
 }
