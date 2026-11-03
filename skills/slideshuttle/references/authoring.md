@@ -27,8 +27,9 @@ Slide 使用全稿唯一、稳定的 ASCII 语义 ID；普通节点只需在本�
 | 布局 | Box；block、Flex、受限 Grid；border-box；显式列宽/比例、gap、padding、margin |
 | 剩余宽度 | flex-grow:1;flex-basis:0;min-width:0，而非 flex:1 简写 |
 | 字体 | 实际存在的 family 与 400/700 字重；Noto CJK 包含常规/粗体，不合成斜体 |
-| 图片 | PNG/JPEG、contain/cover/fill；src 为工程内路径或 Asset ID，圆角/边框放外层盒子，但图片本身不裁圆角 |
-| 矢量图形 | Shape 支持全部 OOXML 预设（箭头、星形、对话气泡、流程图、连接线等，`slide-shuttle shapes` 列出名称与 adjust）；Path 仅绝对 M/L/C/Z，viewBox="100 100" 是逻辑宽高 |
+| 图片 | PNG/JPEG、contain/cover/fill 与 object-position；`border-radius:50%` 圆形头像、`shape="hexagon"` 等预设裁剪、border、阴影 |
+| 图标 | `<Icon src="icons/名称.svg" style="width:40px;height:40px;color:#…"/>`；用 `python3 scripts/icons.py 名称… --out 工程/icons` 从 Lucide 复制，`--list 关键词` 查名称 |
+| 矢量图形 | Shape 支持全部 OOXML 预设（箭头、星形、对话气泡、流程图、连接线等，`slide-shuttle shapes` 列出名称与 adjust）；Path 接受完整 SVG 路径语法，viewBox="100 100" 是逻辑宽高 |
 | 数据 | Chart 仅 bar/line；Labels 用竖线分隔；Series 内空格分隔有限数值；Table 为矩形纯文字单元格 |
 | 填充 | 纯色/RGBA、任意角度线性渐变或径向渐变（2–8 色标）；页面背景还可用 `url(图片)` |
 | 质感 | `box-shadow` 单个外阴影；`border-style:dashed/dotted`；线条/Path 的 `marker-end:arrow` 等箭头；`transform:rotate()` 与镜像只用于叶子 |

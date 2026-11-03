@@ -91,7 +91,7 @@ impl Compiler {
             resources: &Resources,
         ) {
             for node in nodes {
-                if let Kind::Image { src } = &mut node.kind
+                if let Kind::Image { src, .. } | Kind::Icon { src } = &mut node.kind
                     && !resources.images.contains_key(src)
                     && let Some(path) = assets.get(src)
                     && resources.images.contains_key(path)

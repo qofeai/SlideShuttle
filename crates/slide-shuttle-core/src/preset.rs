@@ -234,7 +234,7 @@ pub(crate) fn geometry(name: &str, frame: Rect, adjust: &[f64]) -> Result<Vec<Pr
 
 /// OOXML arcs start at the current point; angles are visual angles in 60000ths of a degree.
 /// Emits cubic segments in path units and returns the end point.
-fn arc(
+pub(crate) fn arc(
     pen: (f64, f64),
     rx: f64,
     ry: f64,

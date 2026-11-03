@@ -3,8 +3,9 @@ use crate::model::*;
 use crate::preset::PathFill;
 use std::collections::{BTreeMap, btree_map::Entry};
 
+/// An absolute path command in page units.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Command {
+pub enum Command {
     M(f32, f32),
     L(f32, f32),
     C(f32, f32, f32, f32, f32, f32),
@@ -18,29 +19,41 @@ pub(crate) fn item_path(item: &Item) -> Result<Vec<Command>> {
     let w = r.width;
     let h = r.height;
     if let Draw::Path { data, view_box } = &item.kind {
-        let mut commands = Vec::new();
-        for segment in svgtypes::PathParser::from(data.as_str()) {
-            use svgtypes::PathSegment::*;
-            let p = segment.map_err(|e| invalid(e.to_string()))?;
-            let xx = |v: f64| finite(x + v as f32 * w / view_box[0], "path coordinate");
-            let yy = |v: f64| finite(y + v as f32 * h / view_box[1], "path coordinate");
-            commands.push(match p {
-                MoveTo { abs: true, x, y } => Command::M(xx(x)?, yy(y)?),
-                LineTo { abs: true, x, y } => Command::L(xx(x)?, yy(y)?),
-                CurveTo {
-                    abs: true,
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    x,
-                    y,
-                } => Command::C(xx(x1)?, yy(y1)?, xx(x2)?, yy(y2)?, xx(x)?, yy(y)?),
-                ClosePath { .. } => Command::Z,
-                _ => return Err(invalid("unsupported path command")),
-            });
-        }
-        return Ok(commands);
+        let (sx, sy) = (w / view_box[0], h / view_box[1]);
+        let p = |a: f32, b: f32| (x + a * sx, y + b * sy);
+        return crate::icon::path_commands(data)?
+            .into_iter()
+            .map(|c| {
+                let c = match c {
+                    Command::M(a, b) => {
+                        let (a, b) = p(a, b);
+                        Command::M(a, b)
+                    }
+                    Command::L(a, b) => {
+                        let (a, b) = p(a, b);
+                        Command::L(a, b)
+                    }
+                    Command::C(a, b, c, d, e, f) => {
+                        let ((a, b), (c, d), (e, f)) = (p(a, b), p(c, d), p(e, f));
+                        Command::C(a, b, c, d, e, f)
+                    }
+                    Command::Z => Command::Z,
+                };
+                match c {
+                    Command::M(a, b) | Command::L(a, b) => {
+                        finite(a, "path coordinate")?;
+                        finite(b, "path coordinate")?;
+                    }
+                    Command::C(a, b, c, d, e, f) => {
+                        for v in [a, b, c, d, e, f] {
+                            finite(v, "path coordinate")?;
+                        }
+                    }
+                    Command::Z => {}
+                }
+                Ok(c)
+            })
+            .collect();
     }
     if matches!(&item.kind, Draw::Shape(s) if s.is("line")) {
         return Ok(vec![Command::M(x, y), Command::L(x + w, y + h)]);
@@ -176,6 +189,24 @@ fn skia_gradient(item: &Item, g: &Gradient) -> Result<tiny_skia::Shader<'static>
     };
     shader.ok_or_else(|| invalid("empty gradient area"))
 }
+/// The item's stroke for tiny-skia: width, dash, caps and joins.
+fn skia_stroke(item: &Item) -> tiny_skia::Stroke {
+    tiny_skia::Stroke {
+        width: item.stroke_width,
+        dash: dash_array(item).and_then(|d| tiny_skia::StrokeDash::new(d, 0.0)),
+        line_cap: match item.line_cap {
+            LineCap::Butt => tiny_skia::LineCap::Butt,
+            LineCap::Round => tiny_skia::LineCap::Round,
+            LineCap::Square => tiny_skia::LineCap::Square,
+        },
+        line_join: match item.line_join {
+            LineJoin::Miter => tiny_skia::LineJoin::Miter,
+            LineJoin::Round => tiny_skia::LineJoin::Round,
+            LineJoin::Bevel => tiny_skia::LineJoin::Bevel,
+        },
+        ..Default::default()
+    }
+}
 /// Dash lengths relative to the stroke width, as Office draws `dash` and `sysDot`.
 fn dash_array(item: &Item) -> Option<Vec<f32>> {
     let w = item.stroke_width;
@@ -276,22 +307,16 @@ fn shadow_layer(
     let Some(s) = item.shadow else {
         return Ok(None);
     };
-    let outline = if let Draw::Image { src, fit } = &item.kind {
-        let bytes = resources
-            .images
-            .get(src)
-            .ok_or_else(|| invalid(format!("missing image {src}")))?;
-        let (w, h) = image_size(bytes)?;
-        vec![(
-            rect_commands(visible_image(item.rect, w as f32, h as f32, fit)).to_vec(),
-            PathFill::Norm,
-            true,
-        )]
-    } else {
-        outlines(item)?
-    };
-    let solid =
-        item.fill.3 > 0 || item.gradient.is_some() || matches!(item.kind, Draw::Image { .. });
+    if matches!(item.kind, Draw::Image { .. }) {
+        // A picture casts the shadow of its clipped frame, as if filled.
+        let frame = Item {
+            fill: Color::BLACK,
+            ..image_frame(item, resources)?
+        };
+        return shadow_layer(&frame, resources, scale);
+    }
+    let outline = outlines(item)?;
+    let solid = item.fill.3 > 0 || item.gradient.is_some();
     // A filled item casts the shadow of its filled parts; an outline casts its strokes.
     let mut builder = tiny_skia::PathBuilder::new();
     for (commands, shade, stroked) in &outline {
@@ -520,7 +545,7 @@ fn paint_png<'r>(
         );
     }
     let transform = tiny_skia::Transform::from_scale(scale, scale).pre_concat(turn_transform(item));
-    if item.fill.3 > 0 || item.stroke_width > 0.0 {
+    if (item.fill.3 > 0 || item.stroke_width > 0.0) && !matches!(item.kind, Draw::Image { .. }) {
         for (commands, shade, stroked) in outlines(item)? {
             let Some(path) = skia_path(&commands) else {
                 continue;
@@ -536,11 +561,7 @@ fn paint_png<'r>(
                 pixmap.stroke_path(
                     &path,
                     &paint(item.stroke, item.opacity),
-                    &tiny_skia::Stroke {
-                        width: item.stroke_width,
-                        dash: dash_array(item).and_then(|d| tiny_skia::StrokeDash::new(d, 0.0)),
-                        ..Default::default()
-                    },
+                    &skia_stroke(item),
                     transform,
                     None,
                 );
@@ -607,14 +628,17 @@ fn paint_png<'r>(
             }
             fill_marks(pixmap, false);
         }
-        Draw::Image { src, fit } => {
+        Draw::Image { src, fit, .. } => {
             let bytes = resources
                 .images
                 .get(src)
                 .ok_or_else(|| invalid(format!("missing image {src}")))?;
             let image = decode_image(bytes)?;
             let (w, h) = image.dimensions();
-            let dest = image_rect(item.rect, w as f32, h as f32, fit);
+            let frame = image_frame(item, resources)?;
+            let transform =
+                tiny_skia::Transform::from_scale(scale, scale).pre_concat(turn_transform(&frame));
+            let dest = image_rect(item.rect, w as f32, h as f32, *fit);
             let dw = (dest.width * scale).ceil().max(1.0) as u32;
             let dh = (dest.height * scale).ceil().max(1.0) as u32;
             if u64::from(dw) * u64::from(dh) > 64_000_000 {
@@ -629,7 +653,7 @@ fn paint_png<'r>(
                 *px = tiny_skia::ColorU8::from_rgba(pixel[0], pixel[1], pixel[2], alpha)
                     .premultiply();
             }
-            // One device pixel per image pixel, anchored on the device grid like before.
+            // One device pixel per image pixel, anchored on the device grid.
             let pattern = tiny_skia::Pattern::new(
                 layer.as_ref(),
                 tiny_skia::SpreadMode::Pad,
@@ -641,15 +665,58 @@ fn paint_png<'r>(
                 )
                 .pre_scale(1.0 / scale, 1.0 / scale),
             );
-            if let Some(path) = skia_path(&rect_commands(visible_image(
-                item.rect, w as f32, h as f32, fit,
-            ))) {
+            let plain = frame.turn.is_identity()
+                && matches!(&frame.kind, Draw::Shape(c) if c.is("rect"))
+                && frame.radius == 0.0;
+            if let Some(path) = skia_path(&fill_outline(&frame)?) {
                 let mut paint = tiny_skia::Paint {
                     shader: pattern,
                     ..Default::default()
                 };
-                paint.anti_alias = !item.turn.is_identity();
+                // Plain rectangles stay pixel-aligned; clipped or turned edges are smoothed.
+                paint.anti_alias = !plain;
                 pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, transform, None);
+            }
+            if item.stroke_width > 0.0 {
+                for (commands, _, stroked) in outlines(&frame)? {
+                    if let (true, Some(path)) = (stroked, skia_path(&commands)) {
+                        pixmap.stroke_path(
+                            &path,
+                            &paint(item.stroke, item.opacity),
+                            &skia_stroke(item),
+                            transform,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+        Draw::Icon(icon) => {
+            let color = paint(item.text_style.color, item.opacity);
+            let stroke = tiny_skia::Stroke {
+                width: icon.stroke_width,
+                line_cap: if icon.round {
+                    tiny_skia::LineCap::Round
+                } else {
+                    tiny_skia::LineCap::Butt
+                },
+                line_join: if icon.round {
+                    tiny_skia::LineJoin::Round
+                } else {
+                    tiny_skia::LineJoin::Miter
+                },
+                ..Default::default()
+            };
+            for p in &icon.paths {
+                let Some(path) = skia_path(&p.commands) else {
+                    continue;
+                };
+                if p.fill {
+                    pixmap.fill_path(&path, &color, tiny_skia::FillRule::Winding, transform, None);
+                }
+                if p.stroke {
+                    pixmap.stroke_path(&path, &color, &stroke, transform, None);
+                }
             }
         }
         Draw::Table { cells, .. } => {
@@ -690,8 +757,35 @@ pub(crate) fn decode_image(bytes: &[u8]) -> Result<image::RgbaImage> {
 pub(crate) fn image_size(bytes: &[u8]) -> Result<(u32, u32)> {
     image_reader(bytes)?.into_dimensions().map_err(image_error)
 }
+/// An image's visible frame as a shape item: its clip outline, border, shadow and turn
+/// all follow this frame, as a PPTX picture frame does.
+fn image_frame(item: &Item, resources: &Resources) -> Result<Item> {
+    let Draw::Image { src, fit, clip } = &item.kind else {
+        return Ok(item.clone());
+    };
+    let bytes = resources
+        .images
+        .get(src)
+        .ok_or_else(|| invalid(format!("missing image {src}")))?;
+    let (w, h) = image_size(bytes)?;
+    Ok(Item {
+        rect: visible_image(item.rect, w as f32, h as f32, *fit),
+        kind: Draw::Shape(clip.clone()),
+        fill: Color(0, 0, 0, 0),
+        gradient: None,
+        ..item.clone()
+    })
+}
+/// The filled area of a shape item, as one outline.
+fn fill_outline(item: &Item) -> Result<Vec<Command>> {
+    Ok(outlines(item)?
+        .into_iter()
+        .filter(|o| o.1 != PathFill::None)
+        .flat_map(|o| o.0)
+        .collect())
+}
 /// The part of the box an image actually covers under its object-fit.
-fn visible_image(rect: Rect, w: f32, h: f32, fit: &str) -> Rect {
+fn visible_image(rect: Rect, w: f32, h: f32, fit: ImageFit) -> Rect {
     let dest = image_rect(rect, w, h, fit);
     let x = dest.x.max(rect.x);
     let y = dest.y.max(rect.y);
@@ -702,19 +796,17 @@ fn visible_image(rect: Rect, w: f32, h: f32, fit: &str) -> Rect {
         height: dest.bottom().min(rect.bottom()) - y,
     }
 }
-pub(crate) fn image_rect(rect: Rect, w: f32, h: f32, fit: &str) -> Rect {
-    if fit == "fill" {
-        return rect;
-    }
-    let ratio = if fit == "cover" {
-        (rect.width / w).max(rect.height / h)
-    } else {
-        (rect.width / w).min(rect.height / h)
+/// Where the whole image is drawn: scaled per object-fit, placed per object-position.
+pub(crate) fn image_rect(rect: Rect, w: f32, h: f32, fit: ImageFit) -> Rect {
+    let ratio = match fit.mode {
+        FitMode::Fill => return rect,
+        FitMode::Cover => (rect.width / w).max(rect.height / h),
+        FitMode::Contain => (rect.width / w).min(rect.height / h),
     };
     let (width, height) = (w * ratio, h * ratio);
     Rect {
-        x: rect.x + (rect.width - width) / 2.0,
-        y: rect.y + (rect.height - height) / 2.0,
+        x: rect.x + (rect.width - width) * fit.position[0],
+        y: rect.y + (rect.height - height) * fit.position[1],
         width,
         height,
     }
@@ -802,7 +894,9 @@ fn paint_pdf(
     }
     let turned = !item.turn.is_identity();
     if turned {
-        surface.push_transform(&krilla_transform(turn_transform(item)));
+        // A picture turns about its frame, like the PPTX picture frame.
+        let basis = image_frame(item, resources)?;
+        surface.push_transform(&krilla_transform(turn_transform(&basis)));
     }
     let painted = paint_pdf_item(item, surface, resources, fonts, links);
     if turned {
@@ -874,12 +968,22 @@ fn paint_pdf_item(
             opacity: krilla::num::NormalizedF32::new(item.stroke.3 as f32 / 255.0 * item.opacity)
                 .unwrap(),
             dash: dash_array(item).map(|array| krilla::paint::StrokeDash { array, offset: 0.0 }),
+            line_cap: match item.line_cap {
+                LineCap::Butt => krilla::paint::LineCap::Butt,
+                LineCap::Round => krilla::paint::LineCap::Round,
+                LineCap::Square => krilla::paint::LineCap::Square,
+            },
+            line_join: match item.line_join {
+                LineJoin::Miter => krilla::paint::LineJoin::Miter,
+                LineJoin::Round => krilla::paint::LineJoin::Round,
+                LineJoin::Bevel => krilla::paint::LineJoin::Bevel,
+            },
             ..Default::default()
         })
     } else {
         None
     };
-    if item.fill.3 > 0 || item.stroke_width > 0.0 {
+    if (item.fill.3 > 0 || item.stroke_width > 0.0) && !matches!(item.kind, Draw::Image { .. }) {
         for (commands, shade, stroked) in outlines(item)? {
             let Some(path) = pdf_path(&commands) else {
                 continue;
@@ -959,7 +1063,7 @@ fn paint_pdf_item(
             }
             fill_marks(surface, false);
         }
-        Draw::Image { src, fit } => {
+        Draw::Image { src, fit, .. } => {
             let data = resources
                 .images
                 .get(src)
@@ -969,9 +1073,10 @@ fn paint_pdf_item(
                 item.rect,
                 decoded.width() as f32,
                 decoded.height() as f32,
-                fit,
+                *fit,
             );
-            if let Some(clip) = pdf_path(&item_path(item)?) {
+            let frame = image_frame(item, resources)?;
+            if let Some(clip) = pdf_path(&fill_outline(&frame)?) {
                 surface.push_clip_path(&clip, &Default::default());
                 surface.push_transform(&krilla::geom::Transform::from_translate(dest.x, dest.y));
                 let image = krilla::image::Image::from_rgba8(
@@ -988,6 +1093,42 @@ fn paint_pdf_item(
                 surface.pop();
                 surface.pop();
                 surface.pop();
+            }
+            if stroke.is_some() {
+                surface.set_fill(None);
+                surface.set_stroke(stroke.clone());
+                for (commands, _, stroked) in outlines(&frame)? {
+                    if let (true, Some(path)) = (stroked, pdf_path(&commands)) {
+                        surface.draw_path(&path);
+                    }
+                }
+            }
+        }
+        Draw::Icon(icon) => {
+            let c = item.text_style.color;
+            let stroke = krilla::paint::Stroke {
+                paint: krilla::color::rgb::Color::new(c.0, c.1, c.2).into(),
+                width: icon.stroke_width,
+                opacity: krilla::num::NormalizedF32::new(c.3 as f32 / 255.0 * item.opacity)
+                    .unwrap(),
+                line_cap: if icon.round {
+                    krilla::paint::LineCap::Round
+                } else {
+                    krilla::paint::LineCap::Butt
+                },
+                line_join: if icon.round {
+                    krilla::paint::LineJoin::Round
+                } else {
+                    krilla::paint::LineJoin::Miter
+                },
+                ..Default::default()
+            };
+            for p in &icon.paths {
+                if let Some(path) = pdf_path(&p.commands) {
+                    surface.set_fill(p.fill.then(|| pdf_fill(c, item.opacity)));
+                    surface.set_stroke(p.stroke.then(|| stroke.clone()));
+                    surface.draw_path(&path);
+                }
             }
         }
         Draw::Table { cells, .. } => {

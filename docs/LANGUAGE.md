@@ -53,9 +53,10 @@ deck/
 | `Box` | 布局与背景，任意支持的子节点 |
 | `Group` | 与 Box 同样布局；PPTX 输出一层原生组；不支持嵌套 Group、组旋转或组级透明度 |
 | `Text` | 行内内容（文本、`Span`、`A`、`br`），或只含 `P` / `List` 的段落内容；保留作者换行并自动折行，见下文“富文本” |
-| `Image` | `src` 为 Asset ID 或相对路径；PNG/JPEG；contain / cover / fill；边框、背景放在外层 Box；不支持图片圆角 |
+| `Image` | `src` 为 Asset ID 或相对路径；PNG/JPEG；`object-fit` contain / cover / fill 与 `object-position`；`border-radius`（`50%` 为圆形）或 `shape="hexagon"` 等任意预设裁剪（`adjust` 同 Shape）；可加 border、box-shadow、transform；没有背景 |
+| `Icon` | `src` 为单色 SVG 图标（如 Lucide），按 `color` 着色，等比放入盒子（默认 24×24）；支持 path / circle / ellipse / rect / line / polyline / polygon / g，不支持 transform、文字、渐变；PPTX 中为可编辑的自定义形状 |
 | `Shape` | `shape` 为 187 种 OOXML 预设之一（默认 rect），如 triangle、rightArrow、star5、wedgeRoundRectCallout、bentConnector3；`adjust` 为预设调整值。完整列表与默认值见 [预设形状](SHAPES.md) 或 `slide-shuttle shapes` |
-| `Path` | `d` 为绝对 M/L/C/Z；`viewBox="100 100"` 为逻辑宽高；不是完整 SVG |
+| `Path` | `d` 为完整 SVG 路径语法（相对命令、H/V、S/T、Q、A 弧线均可）；`viewBox="100 100"` 为逻辑宽高 |
 | `Table` | `Row` 内 `Cell`，矩形纯文字数据；`columns="2 1"` 为列宽比例；等高行、固定表头配色和边框，无合并单元格 |
 | `Chart` | `type="bar|line"`；`Labels` 用 `|` 分隔；`Series name="…" color="#…"` 内空格分隔有限数值；最多 8 系列、100 分类 |
 
@@ -74,11 +75,12 @@ deck/
 | Grid | 显式 px/pt/emu、正数 fr、auto 轨道；grid-template-columns/rows；gap；grid-column/row 的 line、span、`start / end` |
 | 填充 | background/background-color：纯色、`linear-gradient(<角度>deg 或 to top/right/bottom/left, 色标…)`、`radial-gradient([circle,] 色标…)`；2–8 个色标，色标可带 `0%–100%` 位置和透明度，缺省位置均分；径向渐变从中心到最远角 |
 | 边线 | `border:1px solid|dashed|dotted #D0D8DE`，或 border-width、border-style、border-color；非负 border-radius。线条与 Path 的 border 是描边，不占布局空间 |
+| 线帽与拐角 | `stroke-linecap: butt / round / square`、`stroke-linejoin: miter / round / bevel`，作用于描边 |
 | 线端 | `marker-start` / `marker-end`：arrow、stealth、diamond、oval、none；只用于 `shape="line"` 与 Path，大小随线宽 |
 | 阴影 | `box-shadow:<x> <y> [<模糊>] <颜色>`（单个外阴影，模糊 0–200px）；作用于形状、图片和有背景或边框的 Text 盒子；PDF 中阴影以图像嵌入 |
 | 变换 | `transform:rotate(<角度>deg)`、`scaleX(-1)`、`scaleY(-1)`，按 CSS 从右到左组合，绕自身中心，不影响布局；只用于叶子节点，不用于容器、Table、Chart，以及带背景或边框的 Text；越界检查按旋转后的外框 |
 | 透明度 | opacity:0–1，仅叶子绘图对象；Table/Chart/容器不接受 opacity |
-| 图片 | object-fit:contain / cover / fill |
+| 图片 | object-fit:contain / cover / fill；object-position 关键字或百分比（默认居中）|
 | 文字 | font-family、font-size、font-weight:400/700、font-style:normal/italic、line-height、color、text-align:left/center/right/justify |
 | 换行 | white-space:normal / nowrap / pre-wrap；当前 normal 与 pre-wrap 都保留 XML 文本中的空白，不实现浏览器空白折叠 |
 

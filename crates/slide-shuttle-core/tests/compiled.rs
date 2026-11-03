@@ -199,7 +199,9 @@ fn asset_aliases_bind_to_explicit_byte_resources() {
     let doc = Compiler::new(r).unwrap().compile(xml).unwrap();
     assert!(doc.render_png(0, 1.0).is_ok());
     assert!(doc.export_pptx().is_ok());
-    assert!(matches!(&doc.deck().slides[0].nodes[0].kind,Kind::Image{src}if src=="palette.png"));
+    assert!(
+        matches!(&doc.deck().slides[0].nodes[0].kind,Kind::Image{src, ..}if src=="palette.png")
+    );
 }
 
 #[test]

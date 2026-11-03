@@ -85,7 +85,7 @@ pub(crate) fn layout_with_text(
                                     Err(_) => (0.0, leaf.text.line_height),
                                 }
                             }
-                            Kind::Image { src } => resources
+                            Kind::Image { src, .. } => resources
                                 .images
                                 .get(src)
                                 .and_then(|b| crate::render::image_size(b).ok())
@@ -96,6 +96,8 @@ pub(crate) fn layout_with_text(
                                 rows.len() as f32 * (leaf.text.line_height + 20.0),
                             ),
                             Kind::Chart { .. } => (width.unwrap_or(600.0), 320.0),
+                            // Outline icon sets are drawn on a 24px grid.
+                            Kind::Icon { .. } => (24.0, 24.0),
                             _ => (0.0, 0.0),
                         };
                         Size {
@@ -148,6 +150,44 @@ pub(crate) fn layout_with_text(
     Ok(scene)
 }
 
+/// `object-fit` and `object-position` (keywords or percentages per axis, default centered).
+fn image_fit(style: &Css) -> Result<ImageFit> {
+    let mode = style
+        .get("object-fit")
+        .map(|v| keyword(v, "object-fit"))
+        .transpose()?
+        .unwrap_or_default();
+    let mut position = [0.5, 0.5];
+    if let Some(v) = style.get("object-position") {
+        let words = v.split_whitespace().collect::<Vec<_>>();
+        if words.is_empty() || words.len() > 2 {
+            return Err(invalid("object-position takes one or two values"));
+        }
+        for (i, word) in words.iter().enumerate() {
+            let (axis, at) = match *word {
+                "left" => (0, 0.0),
+                "right" => (0, 1.0),
+                "top" => (1, 0.0),
+                "bottom" => (1, 1.0),
+                "center" => (i, 0.5),
+                p => (
+                    i,
+                    p.strip_suffix('%')
+                        .and_then(|n| n.parse::<f32>().ok())
+                        .filter(|n| (0.0..=100.0).contains(n))
+                        .ok_or_else(|| {
+                            invalid(format!(
+                                "object-position value {p} must be a keyword or 0%–100%"
+                            ))
+                        })?
+                        / 100.0,
+                ),
+            };
+            position[axis] = at;
+        }
+    }
+    Ok(ImageFit { mode, position })
+}
 /// The page background: a color, gradient, or `url(<image>)` covering the page.
 fn page_background(value: &str, deck: &Deck, resources: &Resources) -> Result<Item> {
     let mut item = Item {
@@ -166,7 +206,11 @@ fn page_background(value: &str, deck: &Deck, resources: &Resources) -> Result<It
         }
         item.kind = Draw::Image {
             src: src.into(),
-            fit: "cover".into(),
+            fit: ImageFit {
+                mode: FitMode::Cover,
+                ..ImageFit::default()
+            },
+            clip: ShapeKind::default(),
         };
     } else {
         (item.fill, item.gradient) = paint(value)?;
@@ -466,10 +510,28 @@ fn visual(n: &Node, item: &mut Item) -> Result<()> {
             )));
         }
     };
-    item.radius = style("border-radius")
-        .map(length_px)
+    item.line_cap = style("stroke-linecap")
+        .map(|v| keyword(v, "stroke-linecap"))
         .transpose()?
-        .unwrap_or(0.0);
+        .unwrap_or_default();
+    item.line_join = style("stroke-linejoin")
+        .map(|v| keyword(v, "stroke-linejoin"))
+        .transpose()?
+        .unwrap_or_default();
+    item.radius = match style("border-radius") {
+        // A percentage is of the shorter side, so 50% makes a circle or a pill.
+        Some(v) if v.ends_with('%') => {
+            let pct = v[..v.len() - 1]
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .filter(|p| (0.0..=50.0).contains(p))
+                .ok_or_else(|| invalid("border-radius percentage must be 0%–50%"))?;
+            item.rect.width.min(item.rect.height) * pct / 100.0
+        }
+        Some(v) => length_px(v)?,
+        None => 0.0,
+    };
     item.opacity = style("opacity")
         .map(nonnegative)
         .transpose()?
@@ -525,12 +587,27 @@ fn visual(n: &Node, item: &mut Item) -> Result<()> {
             "marker-start/marker-end apply to lines, connectors and Paths",
         ));
     }
-    if matches!(n.kind, Kind::Image { .. })
-        && (item.radius > 0.0 || item.stroke_width > 0.0 || item.fill.3 > 0)
+    if matches!(n.kind, Kind::Icon { .. })
+        && (item.fill.3 > 0
+            || item.gradient.is_some()
+            || item.stroke_width > 0.0
+            || item.shadow.is_some())
     {
         return Err(invalid(
-            "image decoration belongs on a wrapping Box; Image border, background and radius are not supported",
+            "an Icon is colored with color; put backgrounds, borders and shadows on a Box behind it",
         ));
+    }
+    if let Kind::Image { clip, .. } = &n.kind {
+        if item.fill.3 > 0 || item.gradient.is_some() {
+            return Err(invalid(
+                "an Image has no background; put one on a Box behind it",
+            ));
+        }
+        if item.radius > 0.0 && !clip.is("rect") {
+            return Err(invalid(
+                "border-radius rounds a rect image; other clip shapes use adjust",
+            ));
+        }
     }
     if matches!(n.kind, Kind::Table { .. } | Kind::Chart { .. })
         && (item.gradient.is_some()
@@ -855,18 +932,23 @@ impl Emitter<'_> {
                     anchor,
                 }
             }
-            Kind::Image { src } => {
+            Kind::Image { src, clip } => {
                 if !self.resources.images.contains_key(src) {
                     return Err(invalid(format!("missing image resource {src}")));
                 }
                 Draw::Image {
                     src: src.clone(),
-                    fit: n
-                        .style
-                        .get("object-fit")
-                        .cloned()
-                        .unwrap_or("contain".into()),
+                    fit: image_fit(&n.style)?,
+                    clip: clip.clone(),
                 }
+            }
+            Kind::Icon { src } => {
+                let bytes = self
+                    .resources
+                    .images
+                    .get(src)
+                    .ok_or_else(|| invalid(format!("missing icon resource {src}")))?;
+                Draw::Icon(crate::icon::parse_icon(bytes, item.rect)?)
             }
             Kind::Shape { shape } => Draw::Shape(shape.clone()),
             Kind::Path { data, view_box } => Draw::Path {

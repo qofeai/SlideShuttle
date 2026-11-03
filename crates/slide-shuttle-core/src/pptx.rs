@@ -1,5 +1,6 @@
 //! Bounded OOXML writer. Text and data charts are real Office objects.
 use crate::model::*;
+use crate::render::Command;
 use std::{
     collections::BTreeMap,
     io::{Cursor, Write},
@@ -155,8 +156,18 @@ fn stroke(item: &Item) -> String {
             Some(format!("<a:{tag} type=\"{kind}\" w=\"med\" len=\"med\"/>"))
         })
         .collect::<String>();
+    let cap = match item.line_cap {
+        LineCap::Butt => "",
+        LineCap::Round => " cap=\"rnd\"",
+        LineCap::Square => " cap=\"sq\"",
+    };
+    let join = match item.line_join {
+        LineJoin::Miter => "",
+        LineJoin::Round => "<a:round/>",
+        LineJoin::Bevel => "<a:bevel/>",
+    };
     format!(
-        "<a:ln w=\"{}\">{}<a:prstDash val=\"{dash}\"/>{ends}</a:ln>",
+        "<a:ln w=\"{}\"{cap}>{}<a:prstDash val=\"{dash}\"/>{join}{ends}</a:ln>",
         emu(item.stroke_width),
         fill(item.stroke, item.opacity)
     )
@@ -237,9 +248,9 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
             "../slideLayouts/slideLayout1.xml".into(),
         )];
         let background = match &page.background.kind {
-            Draw::Image { src, fit } => {
+            Draw::Image { src, fit, .. } => {
                 let (rel, width, height) = image_rel(src, &mut pkg, &mut rels, &mut shared)?;
-                let (_, crop) = fitted(page.background.rect, width, height, fit);
+                let (_, crop) = fitted(page.background.rect, width, height, *fit);
                 format!(
                     "<a:blipFill dpi=\"0\" rotWithShape=\"1\"><a:blip r:embed=\"{rel}\"/>{crop}<a:stretch><a:fillRect/></a:stretch></a:blipFill>"
                 )
@@ -381,24 +392,50 @@ fn image_rel(
     ));
     Ok((rel, *width as f32, *height as f32))
 }
-/// The picture frame and source crop for an object-fit.
-fn fitted(rect: Rect, width: f32, height: f32, fit: &str) -> (Rect, String) {
-    match fit {
-        "contain" => (
-            crate::render::image_rect(rect, width, height, fit),
-            String::new(),
-        ),
-        "cover" => {
-            let ir = crate::render::image_rect(rect, width, height, fit);
-            let l = ((rect.x - ir.x) / ir.width * 100000.0).round() as i64;
-            let t = ((rect.y - ir.y) / ir.height * 100000.0).round() as i64;
+/// The picture frame and source crop for an object-fit and object-position.
+fn fitted(rect: Rect, width: f32, height: f32, fit: ImageFit) -> (Rect, String) {
+    let ir = crate::render::image_rect(rect, width, height, fit);
+    match fit.mode {
+        FitMode::Cover => {
+            let side = |cut: f32, whole: f32| (cut / whole * 100000.0).round() as i64;
+            let (l, r) = (
+                side(rect.x - ir.x, ir.width),
+                side(ir.right() - rect.right(), ir.width),
+            );
+            let (t, b) = (
+                side(rect.y - ir.y, ir.height),
+                side(ir.bottom() - rect.bottom(), ir.height),
+            );
             (
                 rect,
-                format!("<a:srcRect l=\"{l}\" r=\"{l}\" t=\"{t}\" b=\"{t}\"/>"),
+                format!("<a:srcRect l=\"{l}\" r=\"{r}\" t=\"{t}\" b=\"{b}\"/>"),
             )
         }
-        _ => (rect, String::new()),
+        FitMode::Contain => (ir, String::new()),
+        FitMode::Fill => (rect, String::new()),
     }
+}
+/// Preset geometry with adjust values; a rect with border-radius becomes roundRect.
+fn geometry(shape: &ShapeKind, frame: Rect, radius: f32) -> String {
+    let (name, adjust) = if shape.is("rect") && radius > 0.0 {
+        let v = (radius / frame.width.min(frame.height).max(1.0) * 100000.0)
+            .round()
+            .min(50000.0) as i64;
+        (
+            "roundRect",
+            format!("<a:gd name=\"adj\" fmla=\"val {v}\"/>"),
+        )
+    } else {
+        (
+            shape.preset.as_str(),
+            crate::preset::adjust_names(&shape.preset)
+                .iter()
+                .zip(&shape.adjust)
+                .map(|(n, v)| format!("<a:gd name=\"{n}\" fmla=\"val {}\"/>", v.round() as i64))
+                .collect(),
+        )
+    };
+    format!("<a:prstGeom prst=\"{name}\"><a:avLst>{adjust}</a:avLst></a:prstGeom>")
 }
 fn write_item(
     item: &Item,
@@ -433,15 +470,48 @@ fn write_item(
             },
             paragraphs(content, &item.text_style, item.opacity, rels)?
         ),
-        Draw::Image { src, fit } => {
+        Draw::Image { src, fit, clip } => {
             let (rel, width, height) = image_rel(src, pkg, rels, shared)?;
-            let (rect, crop) = fitted(item.rect, width, height, fit);
+            let (rect, crop) = fitted(item.rect, width, height, *fit);
             format!(
-                "<p:pic><p:nvPicPr><p:cNvPr id=\"{ident}\" name=\"d:{}\"/><p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed=\"{rel}\"><a:alphaModFix amt=\"{}\"/></a:blip>{crop}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}</p:spPr></p:pic>",
+                "<p:pic><p:nvPicPr><p:cNvPr id=\"{ident}\" name=\"d:{}\"/><p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed=\"{rel}\"><a:alphaModFix amt=\"{}\"/></a:blip>{crop}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>{}{}<a:noFill/>{}{}</p:spPr></p:pic>",
                 xml(&item.id),
                 (item.opacity * 100000.0) as u32,
                 xfrm(rect, item.turn),
+                geometry(clip, rect, item.radius),
+                stroke(item),
                 effects(item)
+            )
+        }
+        Draw::Icon(icon) => {
+            let color = item.text_style.color;
+            let paths = icon
+                .paths
+                .iter()
+                .map(|p| (p.commands.as_slice(), p.fill, p.stroke))
+                .collect::<Vec<_>>();
+            let fills = icon.paths.iter().any(|p| p.fill);
+            let line = if icon.paths.iter().any(|p| p.stroke) {
+                format!(
+                    "<a:ln w=\"{}\"{}>{}<a:prstDash val=\"solid\"/>{}</a:ln>",
+                    emu(icon.stroke_width),
+                    if icon.round { " cap=\"rnd\"" } else { "" },
+                    fill(color, item.opacity),
+                    if icon.round { "<a:round/>" } else { "" }
+                )
+            } else {
+                "<a:ln><a:noFill/></a:ln>".into()
+            };
+            format!(
+                "<p:sp>{}<p:spPr>{}{}{}{line}</p:spPr></p:sp>",
+                nv(ident, &item.id, false),
+                xfrm(item.rect, item.turn),
+                custom_geometry(item.rect, &paths),
+                if fills {
+                    fill(color, item.opacity)
+                } else {
+                    "<a:noFill/>".into()
+                }
             )
         }
         Draw::Table { rows, columns, .. } => table(item, ident, rows, columns)?,
@@ -486,32 +556,15 @@ fn write_item(
         Draw::Group => return Err(invalid("unexpected nested group")),
         _ => {
             let geom = if let Draw::Path { .. } = item.kind {
-                custom_geometry(item)?
+                custom_geometry(
+                    item.rect,
+                    &[(&crate::render::item_path(item)?, item.fill.3 > 0, true)],
+                )
             } else {
-                let (name, adjust) = match &item.kind {
-                    Draw::Shape(s) if s.is("rect") && item.radius > 0.0 => {
-                        let v = (item.radius / item.rect.width.min(item.rect.height).max(1.0)
-                            * 100000.0)
-                            .round()
-                            .min(50000.0) as i64;
-                        (
-                            "roundRect",
-                            format!("<a:gd name=\"adj\" fmla=\"val {v}\"/>"),
-                        )
-                    }
-                    Draw::Shape(s) => (
-                        s.preset.as_str(),
-                        crate::preset::adjust_names(&s.preset)
-                            .iter()
-                            .zip(&s.adjust)
-                            .map(|(n, v)| {
-                                format!("<a:gd name=\"{n}\" fmla=\"val {}\"/>", v.round() as i64)
-                            })
-                            .collect(),
-                    ),
-                    _ => ("rect", String::new()),
-                };
-                format!("<a:prstGeom prst=\"{name}\"><a:avLst>{adjust}</a:avLst></a:prstGeom>")
+                match &item.kind {
+                    Draw::Shape(shape) => geometry(shape, item.rect, item.radius),
+                    _ => geometry(&ShapeKind::default(), item.rect, item.radius),
+                }
             };
             format!(
                 "<p:sp>{}<p:spPr>{}{geom}{}{}{}</p:spPr></p:sp>",
@@ -689,35 +742,42 @@ fn table(item: &Item, id: u32, rows: &[Vec<String>], columns: &[f32]) -> Result<
         off_ext(item.rect)
     ))
 }
-fn custom_geometry(item: &Item) -> Result<String> {
-    use crate::render::Command;
-    let mut path = String::new();
+/// Custom geometry from page-unit sub-paths, each with its own fill and stroke flags.
+fn custom_geometry(frame: Rect, paths: &[(&[Command], bool, bool)]) -> String {
     let pt = |x: f32, y: f32| {
         format!(
             "<a:pt x=\"{}\" y=\"{}\"/>",
-            ((x - item.rect.x) * 1000.0).round() as i64,
-            ((y - item.rect.y) * 1000.0).round() as i64
+            ((x - frame.x) * 1000.0).round() as i64,
+            ((y - frame.y) * 1000.0).round() as i64
         )
     };
-    for c in crate::render::item_path(item)? {
-        path.push_str(&match c {
-            Command::M(x, y) => format!("<a:moveTo>{}</a:moveTo>", pt(x, y)),
-            Command::L(x, y) => format!("<a:lnTo>{}</a:lnTo>", pt(x, y)),
-            Command::C(a, b, c, d, e, f) => format!(
-                "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
-                pt(a, b),
-                pt(c, d),
-                pt(e, f)
-            ),
-            Command::Z => "<a:close/>".into(),
-        });
+    let mut list = String::new();
+    for (commands, fill, stroke) in paths {
+        let mut path = String::new();
+        for c in commands.iter() {
+            path.push_str(&match *c {
+                Command::M(x, y) => format!("<a:moveTo>{}</a:moveTo>", pt(x, y)),
+                Command::L(x, y) => format!("<a:lnTo>{}</a:lnTo>", pt(x, y)),
+                Command::C(a, b, c, d, e, f) => format!(
+                    "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
+                    pt(a, b),
+                    pt(c, d),
+                    pt(e, f)
+                ),
+                Command::Z => "<a:close/>".into(),
+            });
+        }
+        list.push_str(&format!(
+            "<a:path w=\"{}\" h=\"{}\" fill=\"{}\" stroke=\"{}\">{path}</a:path>",
+            (frame.width * 1000.0).round().max(1.0) as i64,
+            (frame.height * 1000.0).round().max(1.0) as i64,
+            if *fill { "norm" } else { "none" },
+            u8::from(*stroke)
+        ));
     }
-    Ok(format!(
-        "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst><a:path w=\"{}\" h=\"{}\" fill=\"{}\">{path}</a:path></a:pathLst></a:custGeom>",
-        (item.rect.width * 1000.0).round().max(1.0) as i64,
-        (item.rect.height * 1000.0).round().max(1.0) as i64,
-        if item.fill.3 > 0 { "norm" } else { "none" }
-    ))
+    format!(
+        "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst>{list}</a:pathLst></a:custGeom>"
+    )
 }
 
 fn skeleton(pkg: &mut Package, family: &str) {
