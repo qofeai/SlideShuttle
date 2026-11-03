@@ -1,0 +1,11 @@
+/target/
+/examples/output/
+**/.deck/
+**/.slide-shuttle/
+**/*.receipt.json
+**/core
+/benchmarks/cache/
+/benchmarks/runs/
+**/__pycache__/
+**/node_modules/
+/examples/fonts/*.ttc

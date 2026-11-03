@@ -1,0 +1,14 @@
+[package]
+name = "slide-shuttle-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+slide-shuttle-core = { path = "../slide-shuttle-core" }
+serde_json.workspace = true
+wasm-bindgen = "0.2"

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SlideShuttle · 本地演示预览</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#edf2f6;color:#142b36;font:15px/1.6 system-ui,sans-serif}
+  header{background:#102b38;color:white;padding:20px 32px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+  h1{font-size:24px;margin:0;letter-spacing:-.5px}header p{margin:0;color:#b3cbd6;font-size:13px}
+  .app{max-width:1600px;margin:auto;display:grid;grid-template-columns:280px minmax(0,1fr);gap:28px;padding:28px}
+  aside{background:#fff;padding:22px;border-radius:14px;align-self:start;box-shadow:0 6px 24px #102b3808}
+  label{display:block;font-size:13px;font-weight:600;margin-bottom:20px}input{display:block;width:100%;margin-top:8px;font-size:12px}
+  label.option{display:flex;align-items:start;gap:8px;margin:16px 0;font-weight:400}input[type="checkbox"]{width:auto;margin-top:5px}
+  button{font:inherit;border:1px solid #cbd7df;border-radius:8px;background:white;color:#173541;padding:8px 14px;cursor:pointer}
+  button:disabled{opacity:.4;cursor:default}.primary{background:#087e6d;border-color:#087e6d;color:#fff}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.note{font-size:12px;color:#617885}
+  #status{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;margin:18px 0 0;color:#536b78}
+  .workspace{min-width:0}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+  #canvas{aspect-ratio:16/9;position:relative;background:#fff;box-shadow:0 12px 40px #102b3818;overflow:hidden;border-radius:8px;display:grid;place-items:center}
+  #slide{width:100%;height:100%;object-fit:contain}#placeholder{padding:32px;text-align:center;color:#758b98}
+  #page-label{display:inline-block;min-width:82px;text-align:center;font-variant-numeric:tabular-nums}
+  details{margin-top:18px}summary{cursor:pointer;color:#536b78;font-size:13px}
+  textarea{display:block;width:100%;height:280px;margin:12px 0;padding:14px;border:1px solid #c3d2dc;border-radius:8px;background:#fff;font:12px/1.5 monospace}
+  pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 monospace}#losses{background:#fff8df;border:1px solid #e9d999;padding:14px 18px;border-radius:8px;margin:16px 0}
+  #font-notice{background:#fff8df;border:1px solid #e9d999;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:13px}
+  #filename{color:#617885;font-size:13px;overflow:hidden;text-overflow:ellipsis;max-width:260px;white-space:nowrap}
+  [hidden]{display:none!important}body[data-busy="true"] #status{color:#087e6d}
+  @media(max-width:850px){.app{grid-template-columns:1fr;padding:16px;gap:18px}aside{display:block}header{padding:16px}.toolbar{flex-wrap:wrap}}
+</style>
+<header><div><h1>SlideShuttle</h1><p>本地演示预览 · XML / PPTX</p></div><p>文件在本机处理，不会上传</p></header>
+<div class="app">
+  <aside>
+    <label>演示文稿（不选则打开中文示例）<input id="source" type="file" accept=".xml,.pptx"></label>
+    <p class="note">已内置中文常规、粗体字体，可以直接打开。首次预览会加载约 38 MiB 字体。</p>
+    <details id="resources-panel"><summary>字体与图片（可选）</summary>
+      <label>补充字体文件<input id="fonts" type="file" multiple accept=".ttf,.otf,.ttc" aria-describedby="font-help"></label>
+      <p id="font-help" class="note">需要更接近原稿时，可提供文稿使用的字体。</p>
+      <label class="option"><input id="font-fallback" type="checkbox" checked>缺失字体使用内置字体替代</label>
+      <p class="note"><a href="./fonts/LICENSE.txt" target="_blank" rel="noopener">内置字体许可</a></p>
+      <label>附加图片资源<input id="images" type="file" multiple accept=".png,.jpg,.jpeg" aria-label="附加图片"></label>
+      <p class="note">图片文件名应与 XML 的 src 或 Asset 路径一致。</p>
+    </details>
+    <div class="row" style="margin-top:20px"><button id="run" class="primary" disabled>打开并预览</button><button id="cancel" disabled>取消</button></div>
+    <p id="status" role="status" aria-live="polite">正在加载渲染器…</p>
+  </aside>
+  <main class="workspace">
+    <div class="toolbar">
+      <span id="filename">中文示例</span>
+      <div class="row"><button id="previous" disabled aria-label="上一页">←</button><span id="page-label">尚未载入</span><button id="next" disabled aria-label="下一页">→</button></div>
+      <div class="row"><button id="png" disabled>PNG</button><button id="pdf" disabled>PDF</button><button id="pptx" disabled>PPTX</button></div>
+    </div>
+    <div id="canvas"><p id="placeholder">打开文稿后在这里预览。<br>翻页、图片绘制和导出均在本机完成。</p><img id="slide" hidden alt="当前演示页"></div>
+    <p id="pptx-note" class="note" hidden>导入稿提供重建预览和 PNG/PDF；PPTX 再导出请使用 CLI 检查差异与损失。</p>
+    <p id="font-notice" role="status" hidden></p>
+    <div id="losses" hidden><span id="loss-summary"></span><details><summary>查看重建限制</summary><pre id="loss-detail"></pre></details></div>
+    <details id="source-panel"><summary>查看与调整源文档</summary><textarea id="xml" spellcheck="false" aria-label="演示文稿 XML"></textarea><button id="recompile" disabled>重新排版</button></details>
+    <details><summary>诊断信息</summary><pre id="diagnostics"></pre></details>
+  </main>
+</div>
+<script type="module" src="./preview.mjs"></script>
+</html>

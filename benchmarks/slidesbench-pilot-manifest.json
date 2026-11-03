@@ -1,0 +1,81 @@
+{
+  "benchmark": "SlidesBench / Detailed Instructions Only",
+  "upstreamRepository": "https://github.com/para-lost/AutoPresent",
+  "upstreamCommit": "98e0c012e89469863d9c3c8bc87eac967d82b2e6",
+  "selection": "Filter all available instruction_no_image prompts with no image/photo/picture/logo/icon requirement; take numeric middle per remaining domain, then three longest remaining prompts. Fixed before generation. Art domain has no eligible cases.",
+  "eligibleCount": 64,
+  "tasks": [
+    {
+      "id": "business-slide_15",
+      "domain": "business",
+      "upstreamPath": "slidesbench/examples/business/slide_15/instruction_no_image.txt",
+      "sha256": "dd7b106df2f4183101ce182f1d293ac0ce9fb47e5f8dd395f824c8aedbb5de55"
+    },
+    {
+      "id": "career-slide_14",
+      "domain": "career",
+      "upstreamPath": "slidesbench/examples/career/slide_14/instruction_no_image.txt",
+      "sha256": "5e0c55d30c130f538afaa0d55b5196d87c75f62dde6f763ebb8d07e7c6f5f58c"
+    },
+    {
+      "id": "design-slide_5",
+      "domain": "design",
+      "upstreamPath": "slidesbench/examples/design/slide_5/instruction_no_image.txt",
+      "sha256": "bb4704199df3fdeb017a23ed306beb4c5023ff8c008e51fcf38b35141e4d2a5e"
+    },
+    {
+      "id": "entrepreneur-slide_5",
+      "domain": "entrepreneur",
+      "upstreamPath": "slidesbench/examples/entrepreneur/slide_5/instruction_no_image.txt",
+      "sha256": "d4bad9733b2a62a76baab8c69af13196425683dd0a12862ef00ee070363496b0"
+    },
+    {
+      "id": "environment-slide_9",
+      "domain": "environment",
+      "upstreamPath": "slidesbench/examples/environment/slide_9/instruction_no_image.txt",
+      "sha256": "a9a326ede01bc8618377b5358b77beec6b8d12c6f70305abe61ec1520660048a"
+    },
+    {
+      "id": "food-slide_23",
+      "domain": "food",
+      "upstreamPath": "slidesbench/examples/food/slide_23/instruction_no_image.txt",
+      "sha256": "f82def2b648b64e1610cc7a8bf7518271db2371254f3d5752409a7a55db97097"
+    },
+    {
+      "id": "marketing-slide_28",
+      "domain": "marketing",
+      "upstreamPath": "slidesbench/examples/marketing/slide_28/instruction_no_image.txt",
+      "sha256": "bc06fd376909ad6daa0c232a7d3f5adb65966f9845892b16148f347e4653aaa7"
+    },
+    {
+      "id": "social_media-slide_13",
+      "domain": "social_media",
+      "upstreamPath": "slidesbench/examples/social_media/slide_13/instruction_no_image.txt",
+      "sha256": "fbddfaa855ebcfa3b59b7ced126acf07a66341cdd89142996e5e2b950aa17dd6"
+    },
+    {
+      "id": "technology-slide_9",
+      "domain": "technology",
+      "upstreamPath": "slidesbench/examples/technology/slide_9/instruction_no_image.txt",
+      "sha256": "f4e9aee5b801004677009d0051df5f657d1af654b7f423596a5879d3ab68cd09"
+    },
+    {
+      "id": "career-slide_15",
+      "domain": "career",
+      "upstreamPath": "slidesbench/examples/career/slide_15/instruction_no_image.txt",
+      "sha256": "0c020c044fbbe3c81a1fb9990afb44ccfceb8fde8fcde02857df8b18776f41f5"
+    },
+    {
+      "id": "career-slide_16",
+      "domain": "career",
+      "upstreamPath": "slidesbench/examples/career/slide_16/instruction_no_image.txt",
+      "sha256": "592d3bbd820f0fb7fec37b02e9e4aa6b4b3bfad822543e01cc4d6da20b358a64"
+    },
+    {
+      "id": "business-slide_7",
+      "domain": "business",
+      "upstreamPath": "slidesbench/examples/business/slide_7/instruction_no_image.txt",
+      "sha256": "78cfa47f242e311e7155080629a38055972be47d3e5969f81a4247905dee3598"
+    }
+  ]
+}

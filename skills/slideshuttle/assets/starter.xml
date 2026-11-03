@@ -1,0 +1,115 @@
+<Deck version="1" title="从内容到一份清晰的演示" width="1280px" height="720px" font-family="Noto Sans CJK SC">
+  <Token name="ink" value="#142B36"/>
+  <Token name="accent" value="#087E6D"/>
+  <Token name="paper" value="#F4F1E9"/>
+  <Style name="frame">width:100%;height:100%;padding:48px 56px;display:flex;flex-direction:column;gap:20px</Style>
+  <Style name="kicker">height:28px;font-size:16px;line-height:26px;color:var(--accent)</Style>
+  <Style name="heading">height:70px;font-size:44px;line-height:60px;font-weight:700;color:var(--ink)</Style>
+  <Style name="body">font-size:24px;line-height:38px;color:#536B78</Style>
+  <Component name="Argument">
+    <Box id="row" style="display:flex;gap:24px;height:112px;flex-shrink:0">
+      <Text id="number" style="width:40px;height:36px;font-size:20px;line-height:32px;white-space:nowrap;color:var(--accent)">${number}</Text>
+      <Box id="content" style="display:flex;flex-direction:column;gap:6px;flex-grow:1;flex-basis:0;min-width:0">
+        <Text id="title" style="height:40px;font-size:26px;line-height:36px;font-weight:700;color:var(--ink)">${title}</Text>
+        <Text id="copy" style="height:62px;font-size:20px;line-height:30px;color:#536B78">${copy}</Text>
+      </Box>
+    </Box>
+  </Component>
+  <Slide id="cover" background="#0D2A35">
+    <Box id="cover/frame" class="frame" style="gap:24px">
+      <Text id="cover/kicker" class="kicker" style="color:#73D8C2">A CLEAR POINT OF VIEW / 演示编排示例</Text>
+      <Box id="cover/grid" style="display:grid;grid-template-columns:7fr 5fr;gap:48px;height:450px">
+        <Box id="cover/story" style="display:flex;flex-direction:column;justify-content:center;gap:24px">
+          <Text id="cover/title" style="height:184px;font-size:66px;line-height:86px;font-weight:700;color:#F4F1E9">让内容有结构，<br/>让观点被看见。</Text>
+          <Text id="cover/subtitle" style="height:92px;font-size:24px;line-height:38px;color:#B1C7CC">用关系组织内容，用层级引导阅读。<br/>每一页，都推进一次理解。</Text>
+        </Box>
+        <Group id="cover/visual" style="position:relative;height:430px">
+          <Shape id="cover/rail" style="position:absolute;left:8px;top:76px;width:368px;height:262px;background:#254853;border-radius:16px"/>
+          <Shape id="cover/sheet" style="position:absolute;left:28px;top:48px;width:368px;height:262px;background:#F4F1E9;border-radius:16px"/>
+          <Text id="cover/visual-label" style="position:absolute;left:56px;top:72px;width:280px;height:40px;font-size:22px;line-height:34px;font-weight:700;color:#142B36">ONE CLEAR IDEA.</Text>
+          <Shape id="cover/small" style="position:absolute;left:56px;top:210px;width:78px;height:70px;background:#B8DCD2;border-radius:5px"/>
+          <Shape id="cover/medium" style="position:absolute;left:156px;top:168px;width:78px;height:112px;background:#6DBDA8;border-radius:5px"/>
+          <Shape id="cover/large" style="position:absolute;left:256px;top:126px;width:78px;height:154px;background:#087E6D;border-radius:5px"/>
+          <Path id="cover/arrow" d="M 0 54 C 40 54 52 10 110 0 L 94 1 M 110 0 L 107 17" viewBox="110 64" style="position:absolute;left:224px;top:334px;width:150px;height:80px;border:3px solid #73D8C2"/>
+          <Text id="cover/caption" style="position:absolute;left:28px;top:348px;width:220px;height:40px;font-size:18px;line-height:30px;color:#73D8C2">层级，让重点自然出现。</Text>
+        </Group>
+      </Box>
+      <Text id="cover/footer" style="height:36px;font-size:16px;line-height:26px;color:#86A5AF">结构范例，可替换全部内容、颜色与构图。图形不代表任何真实数据。</Text>
+    </Box>
+  </Slide>
+  <Slide id="structure" background="#F4F1E9">
+    <Box id="structure/frame" class="frame">
+      <Text id="structure/kicker" class="kicker">01 / CONTENT BECOMES AN ARGUMENT</Text>
+      <Text id="structure/title" class="heading">先决定讲什么，再决定怎么摆。</Text>
+      <Box id="structure/grid" style="display:grid;grid-template-columns:5fr 7fr;gap:64px;height:396px">
+        <Box id="structure/lead" style="display:flex;flex-direction:column;gap:16px">
+          <Text id="structure/number" style="height:136px;font-size:112px;line-height:132px;font-weight:700;color:var(--accent)">01</Text>
+          <Text id="structure/statement" style="height:96px;font-size:32px;line-height:44px;font-weight:700;color:var(--ink)">把一页长文，<br/>变成一个清楚的判断。</Text>
+          <Text id="structure/summary" style="height:100px;font-size:22px;line-height:34px;color:#536B78">观点、证据和下一步，<br/>共同决定页面的阅读顺序。</Text>
+        </Box>
+        <Box id="structure/arguments" style="display:flex;flex-direction:column;gap:20px">
+          <Use id="structure/claim" component="Argument" number="A" title="标题提出观点" copy="让观众知道这一页希望解释什么，而不是只有一个抽象主题词。"/>
+          <Use id="structure/evidence" component="Argument" number="B" title="主体支撑判断" copy="用图表、对照或关系图表达证据，把主要空间留给最有用的信息。"/>
+          <Use id="structure/action" component="Argument" number="C" title="结尾连接下一步" copy="给出含义、取舍或行动，让页面之间形成可以跟随的叙事。"/>
+        </Box>
+      </Box>
+      <Text id="structure/note" style="height:50px;font-size:18px;line-height:30px;color:#677B82">编号列表用于有序论证，其他内容可以选用更适合其关系的构图。</Text>
+    </Box>
+  </Slide>
+  <Slide id="evidence" background="#FFFFFF">
+    <Box id="evidence/frame" class="frame">
+      <Text id="evidence/kicker" class="kicker">02 / GIVE EVIDENCE ENOUGH ROOM</Text>
+      <Text id="evidence/title" class="heading">让证据占据足够大的位置。</Text>
+      <Box id="evidence/grid" style="display:grid;grid-template-columns:7fr 5fr;gap:48px;height:390px">
+        <Chart id="evidence/chart" type="bar" style="height:380px">
+          <Labels>阶段一|阶段二|阶段三|阶段四</Labels>
+          <Series name="示例 A" color="#087E6D">24 40 62 80</Series>
+          <Series name="示例 B" color="#9B6B32">18 32 48 64</Series>
+        </Chart>
+        <Box id="evidence/caption" style="display:flex;flex-direction:column;gap:18px;padding:12px 0">
+          <Text id="evidence/sample" style="height:32px;font-size:18px;line-height:30px;color:var(--accent)">演示数据 / 非真实测量</Text>
+          <Text id="evidence/number" style="height:128px;font-size:108px;line-height:128px;font-weight:700;color:var(--ink)">80</Text>
+          <Text id="evidence/claim" style="height:84px;font-size:28px;line-height:42px;font-weight:700;color:var(--ink)">解释靠近证据，<br/>重点无需来回寻找。</Text>
+          <Text id="evidence/explanation" style="height:64px;font-size:20px;line-height:32px;color:#536B78">用紧邻图表的标注解释含义，<br/>保留单位、范围和必要来源。</Text>
+        </Box>
+      </Box>
+      <Text id="evidence/note" style="height:56px;font-size:18px;line-height:28px;color:#677B82">本页数据仅供展示布局，不代表真实测量、业务表现或基准成绩。真实任务应替换为有来源的数据。</Text>
+    </Box>
+  </Slide>
+  <Slide id="audience" background="#EEF4F0">
+    <Box id="audience/frame" class="frame">
+      <Text id="audience/kicker" class="kicker">03 / DESIGN FOR THE READING SITUATION</Text>
+      <Text id="audience/title" class="heading">阅读场景决定信息密度。</Text>
+      <Box id="audience/grid" style="display:grid;grid-template-columns:1fr 1fr;gap:32px;height:350px">
+        <Box id="audience/live" style="padding:28px;background:#FFFFFF;display:flex;flex-direction:column;gap:18px">
+          <Shape id="audience/live-rule" style="width:100%;height:4px;background:var(--accent)"/>
+          <Text id="audience/live-title" style="height:48px;font-size:30px;line-height:44px;font-weight:700;color:var(--ink)">当面演示</Text>
+          <Text id="audience/live-body" style="height:172px;font-size:24px;line-height:42px;color:#536B78">突出当下需要理解的观点。<br/>图像与证据承担主要表达。<br/>讲述补充上下文与细节。</Text>
+        </Box>
+        <Box id="audience/read" style="padding:28px;background:#FFFFFF;display:flex;flex-direction:column;gap:18px">
+          <Shape id="audience/read-rule" style="width:100%;height:4px;background:#C8944D"/>
+          <Text id="audience/read-title" style="height:48px;font-size:30px;line-height:44px;font-weight:700;color:var(--ink)">留存阅读</Text>
+          <Text id="audience/read-body" style="height:172px;font-size:24px;line-height:42px;color:#536B78">让论证脱离讲述仍然完整。<br/>提供必要定义、来源与注释。<br/>细节保持清晰的层级。</Text>
+        </Box>
+      </Box>
+      <Text id="audience/note" style="height:76px;font-size:22px;line-height:34px;color:#536B78">同一套字体、颜色与间距可以保持一致；文字量和构图则随阅读任务调整。</Text>
+    </Box>
+  </Slide>
+  <Slide id="close" background="#142B36">
+    <Box id="close/frame" class="frame" style="gap:28px">
+      <Text id="close/kicker" class="kicker" style="color:#73D8C2">04 / A PRESENTATION IS A SEQUENCE OF DECISIONS</Text>
+      <Text id="close/title" style="height:180px;font-size:62px;line-height:84px;font-weight:700;color:#F4F1E9">让每一页，<br/>推进一次理解。</Text>
+      <Box id="close/steps" style="display:grid;grid-template-columns:7fr 5fr;gap:56px;height:238px">
+        <Box id="close/first" style="display:flex;flex-direction:column;gap:16px">
+          <Text id="close/first-title" style="height:42px;font-size:26px;line-height:38px;color:#73D8C2">先形成判断</Text>
+          <Text id="close/first-body" style="height:124px;font-size:30px;line-height:46px;color:#F4F1E9">组织内容与证据，<br/>让重点自然出现。</Text>
+        </Box>
+        <Box id="close/next" style="display:flex;flex-direction:column;gap:16px">
+          <Text id="close/next-title" style="height:42px;font-size:26px;line-height:38px;color:#73D8C2">再给出行动</Text>
+          <Text id="close/next-body" style="height:124px;font-size:30px;line-height:46px;color:#F4F1E9">真实渲染，逐页复核，<br/>修正后交付。</Text>
+        </Box>
+      </Box>
+      <Text id="close/footer" style="height:36px;font-size:16px;line-height:26px;color:#A3BEC7">五页结构示例 / 标题、论证、证据、对照、收束</Text>
+    </Box>
+  </Slide>
+</Deck>

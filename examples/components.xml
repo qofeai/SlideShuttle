@@ -1,0 +1,69 @@
+<Deck version="1" title="SlideShuttle 渲染能力与可选组件" font-family="Noto Sans CJK SC">
+  <Asset id="palette" src="palette.png"/>
+  <Token name="ink" value="#142B36"/>
+  <Token name="accent" value="#087E6D"/>
+  <Style name="frame">width:100%;height:100%;padding:48px 56px;display:flex;flex-direction:column;gap:20px</Style>
+  <Style name="title">height:66px;font-size:42px;line-height:56px;font-weight:700;color:var(--ink)</Style>
+  <Style name="kicker">height:28px;font-size:16px;line-height:26px;color:var(--accent)</Style>
+  <Component name="BulletRow">
+    <Box id="row" style="display:flex;align-items:start;gap:12px;flex-shrink:0">
+      <Text id="marker" style="flex-shrink:0;white-space:nowrap;color:var(--accent)">•</Text>
+      <Text id="content" style="flex-grow:1;flex-basis:0;min-width:0">${text}</Text>
+    </Box>
+  </Component>
+  <Slide id="typography" background="#EFF5F3">
+    <Box id="type/frame" class="frame">
+      <Text id="type/kicker" class="kicker">TYPE / LIST / MIXED LANGUAGE</Text>
+      <Text id="type/title" class="title">让文字测量承担尺寸判断。</Text>
+      <Text id="type/intro" style="height:76px;font-size:22px;line-height:34px;color:#536B78">可选组件保留自由编排。列表符号根据真实字体自动占位，正文使用剩余空间。</Text>
+      <Box id="type/list" style="display:flex;flex-direction:column;gap:24px;font-size:24px;line-height:36px;color:#142B36">
+        <Use id="type/first" component="BulletRow" text="中英混排：中文、English、123.45% 与标点（括号），使用相同的排版和渲染结果。"/>
+        <Use id="type/second" component="BulletRow" text="正文长度增加时自动换行；保持列表符号和正文分栏，无需猜测符号宽度。"/>
+        <Use id="type/third" component="BulletRow" text="CompiledDeck 保存排版、字形与资源快照；翻页不重新编译，返回已查看的页面可命中缓存。"/>
+        <Use id="type/fourth" component="BulletRow" text="字体、图片和文稿由宿主显式提供，预览可以完全在本机完成。"/>
+      </Box>
+    </Box>
+  </Slide>
+  <Slide id="images" background="#FFFFFF">
+    <Box id="images/frame" class="frame">
+      <Text id="images/kicker" class="kicker">IMAGE / FIT / RESOURCE ALIAS</Text>
+      <Text id="images/title" class="title">同一张图片，三种尺寸策略。</Text>
+      <Text id="images/intro" style="height:70px;font-size:22px;line-height:34px;color:#536B78">下方使用项目自制的确定性测试图。Asset 别名映射到显式加载的 PNG 字节。</Text>
+      <Box id="images/grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;height:300px">
+        <Box id="images/contain-card" style="display:flex;flex-direction:column;gap:16px;padding:16px;background:#EFF5F3">
+          <Text id="images/contain-label" style="height:36px;font-size:22px;line-height:32px;font-weight:700">Contain / 完整显示</Text>
+          <Image id="images/contain" src="palette" style="width:100%;height:190px;object-fit:contain"/>
+        </Box>
+        <Box id="images/cover-card" style="display:flex;flex-direction:column;gap:16px;padding:16px;background:#EFF5F3">
+          <Text id="images/cover-label" style="height:36px;font-size:22px;line-height:32px;font-weight:700">Cover / 居中裁切</Text>
+          <Image id="images/cover" src="palette" style="width:100%;height:190px;object-fit:cover"/>
+        </Box>
+        <Box id="images/fill-card" style="display:flex;flex-direction:column;gap:16px;padding:16px;background:#EFF5F3">
+          <Text id="images/fill-label" style="height:36px;font-size:22px;line-height:32px;font-weight:700">Fill / 填满画框</Text>
+          <Image id="images/fill" src="palette" style="width:100%;height:190px;object-fit:fill"/>
+        </Box>
+      </Box>
+    </Box>
+  </Slide>
+  <Slide id="data" background="#FFFFFF">
+    <Box id="data/frame" class="frame">
+      <Text id="data/kicker" class="kicker">TABLE / LINE CHART / NATIVE OBJECTS</Text>
+      <Text id="data/title" class="title">预览保留数值，交付保留对象。</Text>
+      <Box id="data/grid" style="display:grid;grid-template-columns:7fr 5fr;gap:32px;height:390px">
+        <Chart id="data/line" type="line" style="height:360px">
+          <Labels>Q1|Q2|Q3|Q4</Labels>
+          <Series name="示例序列 A" color="#087E6D">-8 12 18 24</Series>
+          <Series name="示例序列 B" color="#1D4ED8">2 8 16 20</Series>
+        </Chart>
+        <Table id="data/table" columns="1 1 1" style="height:300px;font-size:18px;line-height:28px">
+          <Row><Cell>季度</Cell><Cell>序列 A</Cell><Cell>序列 B</Cell></Row>
+          <Row><Cell>Q1</Cell><Cell>-8</Cell><Cell>2</Cell></Row>
+          <Row><Cell>Q2</Cell><Cell>12</Cell><Cell>8</Cell></Row>
+          <Row><Cell>Q3</Cell><Cell>18</Cell><Cell>16</Cell></Row>
+          <Row><Cell>Q4</Cell><Cell>24</Cell><Cell>20</Cell></Row>
+        </Table>
+      </Box>
+      <Text id="data/note" style="height:56px;font-size:18px;line-height:28px;color:#536B78">数值仅用于渲染测试。PowerPoint、WPS 和 LibreOffice 会使用各自的图表排版器。</Text>
+    </Box>
+  </Slide>
+</Deck>

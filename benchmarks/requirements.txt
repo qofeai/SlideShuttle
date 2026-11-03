@@ -1,0 +1,10 @@
+# Versions used for the 2026-11-02 local benchmark run (Python 3.14).
+python-pptx==1.0.2
+pymupdf==2.0
+pillow==13.0.0
+numpy==2.5.4
+scipy==1.18.1
+scikit-image==0.26.0
+opencv-python-headless==5.0.0.93
+pyrtools==1.1.1
+matplotlib==3.11.2

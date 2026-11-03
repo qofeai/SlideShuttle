@@ -1,0 +1,299 @@
+use serde_json::{Value, json};
+use std::{
+    fs,
+    io::{Cursor, Read, Write},
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
+
+fn font() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../slide-shuttle-core/tests/fonts/DejaVuSans.ttf")
+}
+fn run(root: &Path, args: &[&str], with_font: bool) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_slide-shuttle"));
+    command.current_dir(root).args(args);
+    if with_font {
+        command.arg("--font").arg(font());
+    }
+    command.output().unwrap()
+}
+fn success(output: Output) -> Value {
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+fn setup() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("source.xml"),r#"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="s"><Text id="t" style="width:500px;height:100px">Original body</Text></Slide></Deck>"#).unwrap();
+    dir
+}
+
+#[test]
+fn cli_bare_path_native_outputs_and_refuses_existing_file() {
+    let root = setup();
+    let p = root.path();
+    assert!(!run(p, &["check", "source.xml"], false).status.success());
+    assert!(
+        success(run(p, &["check", "source.xml"], true))["valid"]
+            .as_bool()
+            .unwrap()
+    );
+    success(run(
+        p,
+        &["render", "source.xml", "--out", "preview", "--pdf"],
+        true,
+    ));
+    assert!(p.join("preview/slide-001.png").exists());
+    assert!(p.join("preview/deck.pdf").exists());
+    assert!(
+        !run(p, &["render", "source.xml", "--out", "preview"], true)
+            .status
+            .success()
+    );
+    let exported = success(run(
+        p,
+        &["export", "source.xml", "--out", "first.pptx"],
+        true,
+    ));
+    assert_eq!(exported["externalChecked"], false);
+    let before = fs::read(p.join("first.pptx")).unwrap();
+    assert!(
+        !run(p, &["export", "source.xml", "--out", "first.pptx"], true)
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(p.join("first.pptx")).unwrap(), before);
+    let base = exported["baseline"].as_str().unwrap();
+    let review = success(run(
+        p,
+        &[
+            "diff",
+            "source.xml",
+            "--base",
+            base,
+            "--against",
+            "first.pptx",
+        ],
+        true,
+    ));
+    assert!(review["changes"].as_array().unwrap().is_empty());
+    assert!(
+        !run(p, &["diff", "source.xml", "--against", "first.pptx"], true)
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn import_rebuild_requires_specific_current_decisions() {
+    let root = setup();
+    let p = root.path();
+    success(run(
+        p,
+        &["export", "source.xml", "--out", "original.pptx"],
+        true,
+    ));
+    let imported = success(run(
+        p,
+        &["import", "original.pptx", "--out", "imported"],
+        true,
+    ));
+    assert!(p.join("imported/.slide-shuttle/base.json").exists());
+    assert!(imported["losses"].as_array().unwrap().is_empty());
+    success(run(p, &["check", "imported/deck.xml"], true));
+    let failed = run(
+        p,
+        &[
+            "export",
+            "imported/deck.xml",
+            "--out",
+            "rebuilt.pptx",
+            "--report",
+            "review.json",
+        ],
+        true,
+    );
+    assert!(!failed.status.success());
+    assert!(!p.join("rebuilt.pptx").exists());
+    let review: Value = serde_json::from_slice(&fs::read(p.join("review.json")).unwrap()).unwrap();
+    let items=review["changes"].as_array().unwrap().iter().filter(|c|c["blocking"]==true).map(|c|(c["id"].as_str().unwrap().to_owned(),json!("Rebuild into a new static deck; retain source text, accept changed object identity"))).collect::<serde_json::Map<_,_>>();
+    assert!(!items.is_empty());
+    let acceptance = json!({"diffId":review["diffId"],"items":items});
+    fs::write(
+        p.join("decisions.json"),
+        serde_json::to_vec(&acceptance).unwrap(),
+    )
+    .unwrap();
+    success(run(
+        p,
+        &[
+            "export",
+            "imported/deck.xml",
+            "--out",
+            "rebuilt.pptx",
+            "--accept",
+            "decisions.json",
+        ],
+        true,
+    ));
+    let receipt = fs::read_to_string(p.join("rebuilt.pptx.receipt.json")).unwrap();
+    assert!(!receipt.contains("Original body"));
+    assert!(!receipt.contains("\"changes\""));
+    let source = fs::read_to_string(p.join("imported/deck.xml"))
+        .unwrap()
+        .replace("Original body", "Changed body");
+    fs::write(p.join("imported/deck.xml"), source).unwrap();
+    assert!(
+        !run(
+            p,
+            &[
+                "export",
+                "imported/deck.xml",
+                "--out",
+                "stale.pptx",
+                "--accept",
+                "decisions.json"
+            ],
+            true
+        )
+        .status
+        .success()
+    );
+    assert!(!p.join("stale.pptx").exists());
+}
+
+#[test]
+fn actual_external_edit_and_animation_block_export() {
+    let root = setup();
+    let p = root.path();
+    let exported = success(run(
+        p,
+        &["export", "source.xml", "--out", "original.pptx"],
+        true,
+    ));
+    let base = exported["baseline"].as_str().unwrap();
+    let data = fs::read(p.join("original.pptx")).unwrap();
+    let mut input = zip::ZipArchive::new(Cursor::new(data)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..input.len() {
+        let mut file = input.by_index(i).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        if file.name() == "ppt/slides/slide1.xml" {
+            bytes = String::from_utf8(bytes)
+                .unwrap()
+                .replace("Original body", "Externally changed")
+                .replace("</p:sld>", "<p:timing/></p:sld>")
+                .into_bytes();
+        }
+        output
+            .start_file(file.name(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    fs::write(
+        p.join("external.pptx"),
+        output.finish().unwrap().into_inner(),
+    )
+    .unwrap();
+    let diff = run(
+        p,
+        &[
+            "diff",
+            "source.xml",
+            "--base",
+            base,
+            "--against",
+            "external.pptx",
+            "--out",
+            "review.json",
+        ],
+        true,
+    );
+    assert!(!diff.status.success());
+    let report: Value = serde_json::from_slice(&fs::read(p.join("review.json")).unwrap()).unwrap();
+    let changes = report["changes"].as_array().unwrap();
+    assert!(
+        changes
+            .iter()
+            .any(|c| c["property"] == "text" && c["status"] == "external_unresolved")
+    );
+    assert!(
+        changes
+            .iter()
+            .any(|c| c["property"] == "packagePart" && c["blocking"] == true)
+    );
+    assert!(
+        !run(
+            p,
+            &[
+                "export",
+                "source.xml",
+                "--out",
+                "lost.pptx",
+                "--base",
+                base,
+                "--against",
+                "external.pptx"
+            ],
+            true
+        )
+        .status
+        .success()
+    );
+    assert!(!p.join("lost.pptx").exists());
+}
+
+#[test]
+fn declared_resource_cannot_escape_project_root() {
+    let root = setup();
+    fs::write(root.path().join("source.xml"),r#"<Deck version="1"><Font family="DejaVu Sans" src="../outside.ttf"/><Slide id="s"/></Deck>"#).unwrap();
+    let result = run(root.path(), &["check", "source.xml"], false);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("relative paths"));
+}
+
+#[test]
+fn standalone_measurement_reports_actual_font_geometry() {
+    let root = setup();
+    let style = r#"{"family":"DejaVu Sans","size":24,"lineHeight":34}"#;
+    let wide = success(run(
+        root.path(),
+        &[
+            "measure",
+            "--text",
+            "A paragraph with several words",
+            "--style",
+            style,
+        ],
+        true,
+    ));
+    let narrow = success(run(
+        root.path(),
+        &[
+            "measure",
+            "--text",
+            "A paragraph with several words",
+            "--style",
+            style,
+            "--width",
+            "90",
+        ],
+        true,
+    ));
+    assert_eq!(wide["lineCount"], 1);
+    assert!(narrow["lineCount"].as_u64().unwrap() > 1);
+    assert!(
+        !run(
+            root.path(),
+            &["measure", "--text", "x", "--style", r#"{"fontSize":24}"#],
+            true
+        )
+        .status
+        .success()
+    );
+}

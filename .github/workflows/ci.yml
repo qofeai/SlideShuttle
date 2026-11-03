@@ -1,0 +1,64 @@
+name: Rust and WASM
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo check -p slide-shuttle-core -p slide-shuttle-wasm --target wasm32-unknown-unknown --locked
+      - run: python3 -m unittest discover -s benchmarks -p 'test_*.py'
+      - run: node --test tools/*.test.mjs
+  browser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tools/browser/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: examples/fonts/*.ttc
+          key: preview-fonts-${{ hashFiles('examples/fonts/manifest.json') }}
+      - run: python3 tools/fetch_fonts.py
+      - run: npm ci --prefix tools/browser
+      - run: tools/browser/node_modules/.bin/playwright install --with-deps chromium
+      - run: cargo build -p slide-shuttle-cli --locked
+      - name: Native reference files
+        run: |
+          target/debug/slide-shuttle render examples/demo.xml --out examples/output/preview --pdf --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
+          target/debug/slide-shuttle render examples/components.xml --out examples/output/components-native --pdf --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
+          target/debug/slide-shuttle export examples/demo.xml --out examples/output/SlideShuttle-demo.pptx --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
+      - run: cargo build -p slide-shuttle-wasm --target wasm32-unknown-unknown --release --locked
+      - run: cargo install wasm-bindgen-cli --version 0.2.130 --locked
+      - name: Generate browser and Node bindings
+        run: |
+          wasm-bindgen --target web --out-dir examples/output/wasm target/wasm32-unknown-unknown/release/slide_shuttle_wasm.wasm
+          wasm-bindgen --target nodejs --out-dir target/wasm-node target/wasm32-unknown-unknown/release/slide_shuttle_wasm.wasm
+      - name: WASM lifecycle and native pixel comparison
+        run: node tools/wasm_smoke.cjs target/wasm-node examples/demo.xml examples/fonts/NotoSansCJK-Regular.ttc examples/fonts/NotoSansCJK-Bold.ttc examples/output/preview > examples/output/wasm-smoke-v2.json
+      - name: Real browser and Worker
+        run: node tools/browser_smoke.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rendering-browser
+          path: |
+            examples/output/browser-v2/
+            examples/output/wasm-smoke-v2.json
