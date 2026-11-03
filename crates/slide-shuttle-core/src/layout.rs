@@ -107,28 +107,26 @@ pub(crate) fn layout_with_text(
             },
         )
         .map_err(|e| invalid(e.to_string()))?;
-        let mut page = ScenePage {
-            id: slide.id.clone(),
-            background: Color::parse(&slide.background)?,
+        let mut emitter = Emitter {
+            page: &slide.id,
+            tree: &tree,
+            mapping: &mapping,
+            computed: &computed,
+            text: &mut *text,
+            resources,
             items: Vec::new(),
+            diagnostics: &mut scene.diagnostics,
         };
         for node in &slide.nodes {
-            emit(
-                node,
-                0.0,
-                0.0,
-                None,
-                &slide.id,
-                &tree,
-                &mapping,
-                &computed,
-                text,
-                resources,
-                &mut page.items,
-                &mut scene.diagnostics,
-            )
-            .map_err(|e| at(&node.source, e))?;
+            emitter
+                .emit(node, 0.0, 0.0, None)
+                .map_err(|e| at(&node.source, e))?;
         }
+        let page = ScenePage {
+            id: slide.id.clone(),
+            background: Color::parse(&slide.background)?,
+            items: emitter.items,
+        };
         for item in &page.items {
             if item.rect.x < -0.5
                 || item.rect.y < -0.5
@@ -137,7 +135,7 @@ pub(crate) fn layout_with_text(
             {
                 scene.diagnostics.push(diag(
                     "out_of_bounds",
-                    "error",
+                    Severity::Error,
                     &slide.id,
                     item,
                     "element extends outside the slide",
@@ -483,188 +481,188 @@ fn visual(n: &Node) -> Result<(Color, Option<LinearGradient>, Color, f32, f32, f
     Ok((fill, gradient, stroke, width, radius, opacity))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit(
-    n: &Node,
-    x: f32,
-    y: f32,
-    group: Option<&str>,
-    page: &str,
-    tree: &TaffyTree<Leaf>,
-    mapping: &BTreeMap<String, NodeId>,
-    computed: &BTreeMap<String, TextStyle>,
-    text: &mut TextEngine,
-    resources: &Resources,
-    items: &mut Vec<Item>,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<()> {
-    let l = tree
-        .layout(mapping[&n.id])
-        .map_err(|e| invalid(e.to_string()))?;
-    let rect = Rect {
-        x: x + l.location.x,
-        y: y + l.location.y,
-        width: l.size.width,
-        height: l.size.height,
-    };
-    let content = Rect {
-        x: rect.x + l.border.left + l.padding.left,
-        y: rect.y + l.border.top + l.padding.top,
-        width: (rect.width - l.border.left - l.border.right - l.padding.left - l.padding.right)
-            .max(0.0),
-        height: (rect.height - l.border.top - l.border.bottom - l.padding.top - l.padding.bottom)
-            .max(0.0),
-    };
-    let (fill, gradient, stroke, stroke_width, radius, opacity) = visual(n)?;
-    let ts = computed[&n.id].clone();
-    let mut item = Item {
-        id: n.id.clone(),
-        rect,
-        fill,
-        gradient,
-        stroke,
-        stroke_width,
-        radius,
-        opacity,
-        group: group.map(str::to_owned),
-        kind: Draw::Box,
-        text_style: ts.clone(),
-        source: Some(n.source.clone()),
-    };
-    item.kind = match &n.kind {
-        Kind::Box => Draw::Box,
-        Kind::Group => Draw::Group,
-        Kind::Text { spans } => {
-            item.rect = content;
-            // Text padding/background is a separate painted box; text receives the content box.
-            if fill.3 > 0 || stroke_width > 0.0 {
-                let mut bg = item.clone();
-                bg.rect = rect;
-                bg.id = format!("{}::background", n.id);
-                bg.kind = Draw::Box;
-                items.push(bg);
-                item.fill = Color(0, 0, 0, 0);
-                item.gradient = None;
-                item.stroke_width = 0.0;
-            }
-            let wrap = n.style.get("white-space").is_none_or(|s| s != "nowrap");
-            let mut shaped = text.shape(spans, &ts, Some(content.width), wrap)?;
-            let authored_lines = 1 + spans
-                .iter()
-                .map(|s| s.text.chars().filter(|c| *c == '\n').count())
-                .sum::<usize>();
-            // Intrinsic single-line labels must stay single-line in PPTX. Their
-            // boxes fit our exact font advances; Office engines can differ slightly.
-            // Explicit widths and genuinely wrapped paragraphs retain soft wrapping.
-            let intrinsic_tight = n.style.get("width").is_none_or(|v| v == "auto")
-                && (content.width - shaped.width).abs() <= 0.5
-                && shaped.lines <= authored_lines;
-            let export_wrap = wrap && !intrinsic_tight;
-            if shaped.height > content.height + 0.5 || shaped.width > content.width + 0.5 {
-                diagnostics.push(diag(
+/// Per-slide state shared while turning laid-out nodes into scene items.
+struct Emitter<'a> {
+    page: &'a str,
+    tree: &'a TaffyTree<Leaf>,
+    mapping: &'a BTreeMap<String, NodeId>,
+    computed: &'a BTreeMap<String, TextStyle>,
+    text: &'a mut TextEngine,
+    resources: &'a Resources,
+    items: Vec<Item>,
+    diagnostics: &'a mut Vec<Diagnostic>,
+}
+impl Emitter<'_> {
+    fn emit(&mut self, n: &Node, x: f32, y: f32, group: Option<&str>) -> Result<()> {
+        let l = self
+            .tree
+            .layout(self.mapping[&n.id])
+            .map_err(|e| invalid(e.to_string()))?;
+        let rect = Rect {
+            x: x + l.location.x,
+            y: y + l.location.y,
+            width: l.size.width,
+            height: l.size.height,
+        };
+        let content = Rect {
+            x: rect.x + l.border.left + l.padding.left,
+            y: rect.y + l.border.top + l.padding.top,
+            width: (rect.width - l.border.left - l.border.right - l.padding.left - l.padding.right)
+                .max(0.0),
+            height: (rect.height
+                - l.border.top
+                - l.border.bottom
+                - l.padding.top
+                - l.padding.bottom)
+                .max(0.0),
+        };
+        let (fill, gradient, stroke, stroke_width, radius, opacity) = visual(n)?;
+        let ts = self.computed[&n.id].clone();
+        let mut item = Item {
+            id: n.id.clone(),
+            rect,
+            fill,
+            gradient,
+            stroke,
+            stroke_width,
+            radius,
+            opacity,
+            group: group.map(str::to_owned),
+            kind: Draw::Box,
+            text_style: ts.clone(),
+            source: Some(n.source.clone()),
+        };
+        item.kind = match &n.kind {
+            Kind::Box => Draw::Box,
+            Kind::Group => Draw::Group,
+            Kind::Text { spans } => {
+                item.rect = content;
+                // Text padding/background is a separate painted box; text receives the content box.
+                if fill.3 > 0 || stroke_width > 0.0 {
+                    let mut bg = item.clone();
+                    bg.rect = rect;
+                    bg.id = format!("{}::background", n.id);
+                    bg.kind = Draw::Box;
+                    self.items.push(bg);
+                    item.fill = Color(0, 0, 0, 0);
+                    item.gradient = None;
+                    item.stroke_width = 0.0;
+                }
+                let wrap = n.style.get("white-space").is_none_or(|s| s != "nowrap");
+                let mut shaped = self.text.shape(spans, &ts, Some(content.width), wrap)?;
+                let authored_lines = 1 + spans
+                    .iter()
+                    .map(|s| s.text.chars().filter(|c| *c == '\n').count())
+                    .sum::<usize>();
+                // Intrinsic single-line labels must stay single-line in PPTX. Their
+                // boxes fit our exact font advances; Office engines can differ slightly.
+                // Explicit widths and genuinely wrapped paragraphs retain soft wrapping.
+                let intrinsic_tight = n.style.get("width").is_none_or(|v| v == "auto")
+                    && (content.width - shaped.width).abs() <= 0.5
+                    && shaped.lines <= authored_lines;
+                let export_wrap = wrap && !intrinsic_tight;
+                if shaped.height > content.height + 0.5 || shaped.width > content.width + 0.5 {
+                    self.diagnostics.push(diag(
                     "text_overflow",
-                    "error",
-                    page,
+                    Severity::Error,
+                    self.page,
                     &item,
                     &format!("text measures {:.2}×{:.2}px ({} lines); available {:.2}×{:.2}px; font {} at {:.2}px",shaped.width,shaped.height,shaped.lines,content.width,content.height,ts.family,ts.size),
                 ));
+                }
+                if export_wrap
+                    && shaped.height <= content.height + 0.5
+                    && self
+                        .text
+                        .shape(spans, &ts, Some(content.width * 0.97), wrap)?
+                        .height
+                        > content.height + 0.5
+                {
+                    self.diagnostics.push(diag(
+                        "text_tight",
+                        Severity::Warning,
+                        self.page,
+                        &item,
+                        "text has less than 3% width tolerance",
+                    ));
+                }
+                for g in &mut shaped.glyphs {
+                    g.x += content.x;
+                    g.y += content.y;
+                }
+                Draw::Text {
+                    spans: spans.clone(),
+                    glyphs: shaped.glyphs,
+                    line_count: shaped.lines,
+                    export_wrap,
+                }
             }
-            if export_wrap
-                && shaped.height <= content.height + 0.5
-                && text
-                    .shape(spans, &ts, Some(content.width * 0.97), wrap)?
-                    .height
-                    > content.height + 0.5
-            {
-                diagnostics.push(diag(
-                    "text_tight",
-                    "warning",
-                    page,
+            Kind::Image { src } => {
+                if !self.resources.images.contains_key(src) {
+                    return Err(invalid(format!("missing image resource {src}")));
+                }
+                Draw::Image {
+                    src: src.clone(),
+                    fit: n
+                        .style
+                        .get("object-fit")
+                        .cloned()
+                        .unwrap_or("contain".into()),
+                }
+            }
+            Kind::Shape { shape } => Draw::Shape(*shape),
+            Kind::Path { data, view_box } => Draw::Path {
+                data: data.clone(),
+                view_box: *view_box,
+            },
+            Kind::Table { rows, columns } => {
+                let cells =
+                    table_cells(&item, rows, columns, self.text, self.page, self.diagnostics)?;
+                Draw::Table {
+                    rows: rows.clone(),
+                    columns: columns.clone(),
+                    cells,
+                }
+            }
+            Kind::Chart {
+                chart_type,
+                labels,
+                series,
+            } => {
+                let primitives = chart_items(
                     &item,
-                    "text has less than 3% width tolerance",
-                ));
+                    *chart_type,
+                    labels,
+                    series,
+                    self.text,
+                    self.page,
+                    self.diagnostics,
+                )?;
+                Draw::Chart {
+                    chart_type: *chart_type,
+                    labels: labels.clone(),
+                    series: series.clone(),
+                    primitives,
+                }
             }
-            for g in &mut shaped.glyphs {
-                g.x += content.x;
-                g.y += content.y;
-            }
-            Draw::Text {
-                spans: spans.clone(),
-                glyphs: shaped.glyphs,
-                line_count: shaped.lines,
-                export_wrap,
-            }
+        };
+        self.items.push(item);
+        let next_group = if matches!(n.kind, Kind::Group) {
+            Some(n.id.as_str())
+        } else {
+            group
+        };
+        for c in &n.children {
+            self.emit(c, rect.x, rect.y, next_group)
+                .map_err(|e| at(&c.source, e))?;
         }
-        Kind::Image { src } => {
-            if !resources.images.contains_key(src) {
-                return Err(invalid(format!("missing image resource {src}")));
-            }
-            Draw::Image {
-                src: src.clone(),
-                fit: n
-                    .style
-                    .get("object-fit")
-                    .cloned()
-                    .unwrap_or("contain".into()),
-            }
-        }
-        Kind::Shape { shape } => Draw::Shape(shape.clone()),
-        Kind::Path { data, view_box } => Draw::Path {
-            data: data.clone(),
-            view_box: *view_box,
-        },
-        Kind::Table { rows, columns } => {
-            let cells = table_cells(&item, rows, columns, text, page, diagnostics)?;
-            Draw::Table {
-                rows: rows.clone(),
-                columns: columns.clone(),
-                cells,
-            }
-        }
-        Kind::Chart {
-            chart_type,
-            labels,
-            series,
-        } => {
-            let primitives =
-                chart_items(&item, chart_type, labels, series, text, page, diagnostics)?;
-            Draw::Chart {
-                chart_type: chart_type.clone(),
-                labels: labels.clone(),
-                series: series.clone(),
-                primitives,
-            }
-        }
-    };
-    items.push(item);
-    let next_group = if matches!(n.kind, Kind::Group) {
-        Some(n.id.as_str())
-    } else {
-        group
-    };
-    for c in &n.children {
-        emit(
-            c,
-            rect.x,
-            rect.y,
-            next_group,
-            page,
-            tree,
-            mapping,
-            computed,
-            text,
-            resources,
-            items,
-            diagnostics,
-        )
-        .map_err(|e| at(&c.source, e))?;
+        Ok(())
     }
-    Ok(())
 }
-fn diag(code: &str, severity: &str, page: &str, item: &Item, message: &str) -> Diagnostic {
+fn diag(code: &str, severity: Severity, page: &str, item: &Item, message: &str) -> Diagnostic {
     Diagnostic {
         code: code.into(),
-        severity: severity.into(),
+        severity,
         page: page.into(),
         node_id: item.id.clone(),
         message: message.into(),
@@ -780,7 +778,7 @@ fn table_cells(
             if shape.height > content.height + 0.5 {
                 diagnostics.push(diag(
                     "table_text_overflow",
-                    "error",
+                    Severity::Error,
                     page,
                     &ti,
                     "cell text exceeds row height",
@@ -804,7 +802,7 @@ fn table_cells(
 }
 fn chart_items(
     parent: &Item,
-    kind: &str,
+    kind: ChartType,
     labels: &[String],
     series: &[Series],
     text: &mut TextEngine,
@@ -878,7 +876,7 @@ fn chart_items(
     }
     for (si, s) in series.iter().enumerate() {
         let color = Color::parse(&s.color)?;
-        if kind == "bar" {
+        if kind == ChartType::Bar {
             for (i, v) in s.values.iter().enumerate() {
                 let bw = slot * 0.7 / series.len() as f32;
                 let a = y(*v);
@@ -945,7 +943,7 @@ fn chart_items(
         {
             diagnostics.push(diag(
                 "chart_label_overflow",
-                "error",
+                Severity::Error,
                 page,
                 item,
                 "chart tick, category label or legend does not fit inside the chart",

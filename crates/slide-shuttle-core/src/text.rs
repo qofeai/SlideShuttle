@@ -113,12 +113,11 @@ impl TextEngine {
         let mut buffer = Buffer::new(&mut self.system, Metrics::new(base.size, base.line_height));
         buffer.set_size(width.map(|v| v.max(0.01)), None);
         buffer.set_wrap(if wrap { Wrap::WordOrGlyph } else { Wrap::None });
-        let align = match base.align.as_str() {
-            "left" => cosmic_text::Align::Left,
-            "center" => cosmic_text::Align::Center,
-            "right" => cosmic_text::Align::Right,
-            "justify" => cosmic_text::Align::Justified,
-            _ => return Err(invalid("unsupported text-align")),
+        let align = match base.align {
+            Align::Left => cosmic_text::Align::Left,
+            Align::Center => cosmic_text::Align::Center,
+            Align::Right => cosmic_text::Align::Right,
+            Align::Justify => cosmic_text::Align::Justified,
         };
         buffer.set_rich_text(rich, &default, Shaping::Advanced, Some(align));
         buffer.shape_until_scroll(&mut self.system, false);
@@ -215,10 +214,7 @@ pub(crate) fn text_style(css: &Css, parent: &TextStyle) -> Result<TextStyle> {
         s.color = Color::parse(v)?;
     }
     if let Some(v) = css.get("text-align") {
-        if !["left", "center", "right", "justify"].contains(&v.as_str()) {
-            return Err(invalid("unsupported text-align"));
-        }
-        s.align = v.clone();
+        s.align = keyword(v, "text-align")?;
     }
     if !s.size.is_finite()
         || !s.line_height.is_finite()

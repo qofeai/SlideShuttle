@@ -290,6 +290,22 @@ impl Transform {
         ]
     }
 }
+/// Per-slide inputs shared by every object in the slide tree.
+#[derive(Clone, Copy)]
+struct SlidePart<'d, 'i, 'a> {
+    page: &'a str,
+    rels: &'a BTreeMap<String, String>,
+    fallback: &'d [Document<'i>],
+    styles: &'a Styles<'d, 'i>,
+}
+/// The reconstructed object's identity, position and translated style.
+struct Target<'a> {
+    name: &'a str,
+    id: &'a str,
+    pos: &'a str,
+    css: &'a str,
+    props: &'a Value,
+}
 struct Reader<'a> {
     entries: &'a BTreeMap<String, Vec<u8>>,
     objects: Vec<Object>,
@@ -438,12 +454,15 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         }
         reader.nodes.clear();
         if let Some(tree) = desc(root, P, "spTree") {
+            let part = SlidePart {
+                page: &page,
+                rels: &r,
+                fallback: &fallback,
+                styles: &styles,
+            };
             reader.walk(
                 tree,
-                &page,
-                &r,
-                &fallback,
-                &styles,
+                &part,
                 Transform {
                     sx: 1.0,
                     sy: 1.0,
@@ -574,18 +593,27 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
 }
 
 impl Reader<'_> {
-    #[allow(clippy::too_many_arguments)]
+    fn loss(&mut self, page: &str, object: &str, reason: impl Into<String>) {
+        self.losses.push(Loss {
+            page: page.into(),
+            object: object.into(),
+            reason: reason.into(),
+        });
+    }
     fn walk<'d, 'i>(
         &mut self,
         tree: X<'d, 'i>,
-        page: &str,
-        rels: &BTreeMap<String, String>,
-        fallback: &'d [Document<'i>],
-        styles: &Styles<'d, 'i>,
+        part: &SlidePart<'d, 'i, '_>,
         transform: Transform,
         parent: Option<String>,
         depth: usize,
     ) -> Result<()> {
+        let SlidePart {
+            page,
+            rels,
+            fallback,
+            styles,
+        } = *part;
         if depth > 32 {
             return Err(invalid("group nesting exceeds limit"));
         }
@@ -595,11 +623,7 @@ impl Reader<'_> {
                 continue;
             }
             if !["sp", "pic", "graphicFrame", "cxnSp", "grpSp"].contains(&tag) {
-                self.losses.push(Loss {
-                    page: page.into(),
-                    object: tag.into(),
-                    reason: "unsupported slide tree element".into(),
-                });
+                self.loss(page, tag, "unsupported slide tree element");
                 continue;
             }
             let nv = desc(n, P, "cNvPr");
@@ -624,22 +648,14 @@ impl Reader<'_> {
             ];
             let geometry = transform.rect(local);
             if xf.is_none() {
-                self.losses.push(Loss {
-                    page: page.into(),
-                    object: name.clone(),
-                    reason: "missing effective geometry".into(),
-                });
+                self.loss(page, &name, "missing effective geometry");
             }
             if xf.is_some_and(|x| {
                 x.attribute("rot").is_some_and(|v| v != "0")
                     || x.attribute("flipH") == Some("1")
                     || x.attribute("flipV") == Some("1")
             }) {
-                self.losses.push(Loss {
-                    page: page.into(),
-                    object: name.clone(),
-                    reason: "rotation/flip is not reconstructed".into(),
-                });
+                self.loss(page, &name, "rotation/flip is not reconstructed");
             }
             let raw_text = plain(n);
             let text = if tag == "grpSp" {
@@ -677,19 +693,19 @@ impl Reader<'_> {
                         }
                 });
                 if unsupported {
-                    self.losses.push(Loss {
-                        page: page.into(),
-                        object: name.clone(),
-                        reason: format!("{feature} appearance is not reconstructed"),
-                    });
+                    self.loss(
+                        page,
+                        &name,
+                        format!("{feature} appearance is not reconstructed"),
+                    );
                 }
             }
             if tag == "grpSp" {
-                self.losses.push(Loss {
-                    page: page.into(),
-                    object: name.clone(),
-                    reason: "native group hierarchy flattened into absolute objects".into(),
-                });
+                self.loss(
+                    page,
+                    &name,
+                    "native group hierarchy flattened into absolute objects",
+                );
                 let choff = xf.and_then(|n| child(n, A, "chOff"));
                 let chext = xf.and_then(|n| child(n, A, "chExt"));
                 let cw = number(chext, "cx", local[2]).max(1) as f64;
@@ -702,16 +718,7 @@ impl Reader<'_> {
                     tx: geometry[0] as f64 - number(choff, "x", 0) as f64 * sx,
                     ty: geometry[1] as f64 - number(choff, "y", 0) as f64 * sy,
                 };
-                self.walk(
-                    n,
-                    page,
-                    rels,
-                    fallback,
-                    styles,
-                    next,
-                    Some(name.clone()),
-                    depth + 1,
-                )?;
+                self.walk(n, part, next, Some(name.clone()), depth + 1)?;
                 continue;
             }
             let pos = format!(
@@ -738,248 +745,243 @@ impl Reader<'_> {
                         geometry[2].min(geometry[3]) as f64 * adj / 100000.0
                     ));
                 } else {
-                    self.losses.push(Loss {
-                        page: page.into(),
-                        object: name.clone(),
-                        reason: "rounded corner guide could not be reconstructed".into(),
-                    });
+                    self.loss(
+                        page,
+                        &name,
+                        "rounded corner guide could not be reconstructed",
+                    );
                 }
             }
-            let out = if tag == "pic" {
-                if let Some(blip) = desc(n, A, "blip") {
-                    if let Some(path) = blip.attribute((R, "embed")).and_then(|id| rels.get(id)) {
-                        if let Some(bytes) = self.entries.get(path) {
-                            let mut bytes = bytes.clone();
-                            if let Some(crop) = desc(n, A, "srcRect") {
-                                let im = crate::render::decode_image(&bytes)?;
-                                let (w, h) = (im.width(), im.height());
-                                let frac = |a: &str| {
-                                    crop.attribute(a)
-                                        .and_then(|v| v.parse::<f32>().ok())
-                                        .unwrap_or(0.0)
-                                        / 100000.0
-                                };
-                                let l = frac("l");
-                                let t = frac("t");
-                                let rr = frac("r");
-                                let b = frac("b");
-                                if [l, t, rr, b].iter().all(|v| *v >= 0.0)
-                                    && l + rr < 1.0
-                                    && t + b < 1.0
-                                {
-                                    let cropped = image::imageops::crop_imm(
-                                        &im,
-                                        (w as f32 * l) as u32,
-                                        (h as f32 * t) as u32,
-                                        (w as f32 * (1.0 - l - rr)).max(1.0) as u32,
-                                        (h as f32 * (1.0 - t - b)).max(1.0) as u32,
-                                    )
-                                    .to_image();
-                                    let mut c = Cursor::new(Vec::new());
-                                    image::DynamicImage::ImageRgba8(cropped)
-                                        .write_to(&mut c, image::ImageFormat::Png)
-                                        .map_err(|e| invalid(e.to_string()))?;
-                                    bytes = c.into_inner();
-                                } else {
-                                    self.losses.push(Loss {
-                                        page: page.into(),
-                                        object: name.clone(),
-                                        reason: "unsupported image crop".into(),
-                                    });
-                                }
-                            }
-                            let asset = format!("media/{}.png", digest(&bytes));
-                            self.assets.insert(asset.clone(), bytes);
-                            let mut opacity = 1.0;
-                            for effect in blip
-                                .children()
-                                .filter(|n| n.has_tag_name((A, "alphaModFix")))
-                            {
-                                if let Some(value) = colors::percentage(effect.attribute("amt")) {
-                                    opacity = (opacity * value).clamp(0.0, 1.0);
-                                } else {
-                                    problems.insert("invalid image alphaModFix".into());
-                                }
-                            }
-                            format!(
-                                "<Image id=\"{import_id}\" src=\"{}\" style=\"{pos};object-fit:fill;opacity:{opacity}\"/>",
-                                xml(&asset)
-                            )
-                        } else {
-                            self.losses.push(Loss {
-                                page: page.into(),
-                                object: name.clone(),
-                                reason: "missing image payload".into(),
-                            });
-                            String::new()
-                        }
-                    } else {
-                        self.losses.push(Loss {
-                            page: page.into(),
-                            object: name.clone(),
-                            reason: "linked image not retrieved".into(),
-                        });
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                }
-            } else if let Some(table) = desc(n, A, "tbl") {
-                let columns = table
-                    .descendants()
-                    .filter(|x| x.has_tag_name((A, "gridCol")))
-                    .map(|x| x.attribute("w").unwrap_or("1"))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let mut rows = String::new();
-                for tr in table.children().filter(|x| x.has_tag_name((A, "tr"))) {
-                    rows.push_str("<Row>");
-                    for tc in tr.children().filter(|x| x.has_tag_name((A, "tc"))) {
-                        rows.push_str(&format!("<Cell>{}</Cell>", xml(&plain(tc))));
-                        if tc.attribute("gridSpan").is_some() || tc.attribute("rowSpan").is_some() {
-                            self.losses.push(Loss {
-                                page: page.into(),
-                                object: name.clone(),
-                                reason: "merged table cells are not reconstructed".into(),
-                            });
-                        }
-                    }
-                    rows.push_str("</Row>");
-                }
-                format!(
-                    "<Table id=\"{import_id}\" columns=\"{columns}\" style=\"{pos};{}\">{rows}</Table>",
-                    xml(&css)
-                )
-            } else if let Some(chart) = n.descendants().find(|x| x.tag_name().name() == "chart") {
-                if let Some(path) = chart.attribute((R, "id")).and_then(|id| rels.get(id)) {
-                    if let Some(bytes) = self.entries.get(path) {
-                        match chart_source(bytes, &import_id, &pos, styles, &mut problems) {
-                            Ok(xml) => xml,
-                            Err(e) => {
-                                self.losses.push(Loss {
-                                    page: page.into(),
-                                    object: name.clone(),
-                                    reason: e.to_string(),
-                                });
-                                String::new()
-                            }
-                        }
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                }
-            } else if let Some(body) =
-                child(n, P, "txBody").filter(|body| !plain(*body).trim().is_empty())
-            {
-                let mut spans = String::new();
-                for (pi, p) in body
-                    .children()
-                    .filter(|x| x.has_tag_name((A, "p")))
-                    .enumerate()
-                {
-                    if pi > 0 {
-                        spans.push_str("<br/>");
-                    }
-                    let paragraph = styles.text_properties(n, Some(p), None, &mut problems);
-                    if pi > 0 && paragraph.get("align") != props.get("align") {
-                        problems.insert(
-                            "mixed paragraph alignments in one text object are not reconstructed"
-                                .into(),
-                        );
-                    }
-                    for run in p.children().filter(|x| x.is_element()) {
-                        if run.has_tag_name((A, "r")) || run.has_tag_name((A, "fld")) {
-                            let value = desc(run, A, "t").and_then(|x| x.text()).unwrap_or("");
-                            let mut props =
-                                styles.text_properties(n, Some(p), Some(run), &mut problems);
-                            props.remove("align");
-                            let style = style_css(&Value::Object(props));
-                            spans.push_str(&format!(
-                                "<Span style=\"{}\">{}</Span>",
-                                xml(&style),
-                                xml(value)
-                            ));
-                        } else if run.has_tag_name((A, "br")) {
-                            spans.push_str("<br/>");
-                        }
-                    }
-                }
-                let bodypr = child(body, A, "bodyPr");
-                let white_space = if bodypr.is_some_and(|p| p.attribute("wrap") == Some("none")) {
-                    ";white-space:nowrap"
-                } else {
-                    ""
-                };
-                let l = number(bodypr, "lIns", 91440);
-                let r = number(bodypr, "rIns", 91440);
-                let t = number(bodypr, "tIns", 45720);
-                let b = number(bodypr, "bIns", 45720);
-                format!(
-                    "<Text id=\"{import_id}\" style=\"{pos};{}{white_space};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
-                    xml(&css)
-                )
-            } else if let Some(geom) = desc(n, A, "prstGeom") {
-                let shape = match geom.attribute("prst").unwrap_or("rect") {
-                    "rect" | "roundRect" => "rect",
-                    "ellipse" => "ellipse",
-                    "line" => "line",
-                    other => {
-                        self.losses.push(Loss {
-                            page: page.into(),
-                            object: name.clone(),
-                            reason: format!("preset shape {other} approximated as rectangle"),
-                        });
-                        "rect"
-                    }
-                };
-                format!(
-                    "<Shape id=\"{import_id}\" shape=\"{shape}\" style=\"{pos};{}\"/>",
-                    xml(&css)
-                )
-            } else if let Some(custom) = desc(n, A, "custGeom") {
-                if let Some((data, vb)) = custom_path(custom) {
-                    format!(
-                        "<Path id=\"{import_id}\" d=\"{}\" viewBox=\"{} {}\" style=\"{pos};{}\"/>",
-                        xml(&data),
-                        vb[0],
-                        vb[1],
-                        xml(&css)
-                    )
-                } else {
-                    self.losses.push(Loss {
-                        page: page.into(),
-                        object: name.clone(),
-                        reason: "custom path needs unsupported guide evaluation".into(),
-                    });
-                    String::new()
-                }
-            } else if child(n, P, "txBody").is_some() {
-                // Empty text placeholders without shape geometry are retained,
-                // but paragraph markers and insets do not invent visible text.
-                // Shapes/paths with an empty txBody take their geometry branch.
-                format!("<Text id=\"{import_id}\" style=\"{pos};{}\"/>", xml(&css))
-            } else {
-                self.losses.push(Loss {
-                    page: page.into(),
-                    object: name.clone(),
-                    reason: "object not reconstructable".into(),
-                });
-                String::new()
+            let target = Target {
+                name: &name,
+                id: &import_id,
+                pos: &pos,
+                css: &css,
+                props: &props,
             };
+            let out = self.reconstruct(n, part, &target, &mut problems)?;
             if !out.is_empty() {
                 self.nodes.push(out);
             }
             for reason in problems {
-                self.losses.push(Loss {
-                    page: page.into(),
-                    object: name.clone(),
-                    reason,
-                });
+                self.loss(page, &name, reason);
             }
         }
         Ok(())
+    }
+    /// Rebuild one non-group slide object as source XML; unsupported parts become losses.
+    fn reconstruct(
+        &mut self,
+        n: X<'_, '_>,
+        part: &SlidePart<'_, '_, '_>,
+        target: &Target<'_>,
+        problems: &mut Problems,
+    ) -> Result<String> {
+        let SlidePart {
+            page, rels, styles, ..
+        } = *part;
+        let Target {
+            name,
+            id: import_id,
+            pos,
+            css,
+            props,
+        } = *target;
+        let tag = n.tag_name().name();
+        Ok(if tag == "pic" {
+            if let Some(blip) = desc(n, A, "blip") {
+                if let Some(path) = blip.attribute((R, "embed")).and_then(|id| rels.get(id)) {
+                    if let Some(bytes) = self.entries.get(path) {
+                        let mut bytes = bytes.clone();
+                        if let Some(crop) = desc(n, A, "srcRect") {
+                            let im = crate::render::decode_image(&bytes)?;
+                            let (w, h) = (im.width(), im.height());
+                            let frac = |a: &str| {
+                                crop.attribute(a)
+                                    .and_then(|v| v.parse::<f32>().ok())
+                                    .unwrap_or(0.0)
+                                    / 100000.0
+                            };
+                            let l = frac("l");
+                            let t = frac("t");
+                            let rr = frac("r");
+                            let b = frac("b");
+                            if [l, t, rr, b].iter().all(|v| *v >= 0.0)
+                                && l + rr < 1.0
+                                && t + b < 1.0
+                            {
+                                let cropped = image::imageops::crop_imm(
+                                    &im,
+                                    (w as f32 * l) as u32,
+                                    (h as f32 * t) as u32,
+                                    (w as f32 * (1.0 - l - rr)).max(1.0) as u32,
+                                    (h as f32 * (1.0 - t - b)).max(1.0) as u32,
+                                )
+                                .to_image();
+                                let mut c = Cursor::new(Vec::new());
+                                image::DynamicImage::ImageRgba8(cropped)
+                                    .write_to(&mut c, image::ImageFormat::Png)
+                                    .map_err(|e| invalid(e.to_string()))?;
+                                bytes = c.into_inner();
+                            } else {
+                                self.loss(page, name, "unsupported image crop");
+                            }
+                        }
+                        let asset = format!("media/{}.png", digest(&bytes));
+                        self.assets.insert(asset.clone(), bytes);
+                        let mut opacity = 1.0;
+                        for effect in blip
+                            .children()
+                            .filter(|n| n.has_tag_name((A, "alphaModFix")))
+                        {
+                            if let Some(value) = colors::percentage(effect.attribute("amt")) {
+                                opacity = (opacity * value).clamp(0.0, 1.0);
+                            } else {
+                                problems.insert("invalid image alphaModFix".into());
+                            }
+                        }
+                        format!(
+                            "<Image id=\"{import_id}\" src=\"{}\" style=\"{pos};object-fit:fill;opacity:{opacity}\"/>",
+                            xml(&asset)
+                        )
+                    } else {
+                        self.loss(page, name, "missing image payload");
+                        String::new()
+                    }
+                } else {
+                    self.loss(page, name, "linked image not retrieved");
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else if let Some(table) = desc(n, A, "tbl") {
+            let columns = table
+                .descendants()
+                .filter(|x| x.has_tag_name((A, "gridCol")))
+                .map(|x| x.attribute("w").unwrap_or("1"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut rows = String::new();
+            for tr in table.children().filter(|x| x.has_tag_name((A, "tr"))) {
+                rows.push_str("<Row>");
+                for tc in tr.children().filter(|x| x.has_tag_name((A, "tc"))) {
+                    rows.push_str(&format!("<Cell>{}</Cell>", xml(&plain(tc))));
+                    if tc.attribute("gridSpan").is_some() || tc.attribute("rowSpan").is_some() {
+                        self.loss(page, name, "merged table cells are not reconstructed");
+                    }
+                }
+                rows.push_str("</Row>");
+            }
+            format!(
+                "<Table id=\"{import_id}\" columns=\"{columns}\" style=\"{pos};{}\">{rows}</Table>",
+                xml(css)
+            )
+        } else if let Some(chart) = n.descendants().find(|x| x.tag_name().name() == "chart") {
+            if let Some(path) = chart.attribute((R, "id")).and_then(|id| rels.get(id)) {
+                if let Some(bytes) = self.entries.get(path) {
+                    match chart_source(bytes, import_id, pos, styles, problems) {
+                        Ok(xml) => xml,
+                        Err(e) => {
+                            self.loss(page, name, e.to_string());
+                            String::new()
+                        }
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else if let Some(body) =
+            child(n, P, "txBody").filter(|body| !plain(*body).trim().is_empty())
+        {
+            let mut spans = String::new();
+            for (pi, p) in body
+                .children()
+                .filter(|x| x.has_tag_name((A, "p")))
+                .enumerate()
+            {
+                if pi > 0 {
+                    spans.push_str("<br/>");
+                }
+                let paragraph = styles.text_properties(n, Some(p), None, problems);
+                if pi > 0 && paragraph.get("align") != props.get("align") {
+                    problems.insert(
+                        "mixed paragraph alignments in one text object are not reconstructed"
+                            .into(),
+                    );
+                }
+                for run in p.children().filter(|x| x.is_element()) {
+                    if run.has_tag_name((A, "r")) || run.has_tag_name((A, "fld")) {
+                        let value = desc(run, A, "t").and_then(|x| x.text()).unwrap_or("");
+                        let mut props = styles.text_properties(n, Some(p), Some(run), problems);
+                        props.remove("align");
+                        let style = style_css(&Value::Object(props));
+                        spans.push_str(&format!(
+                            "<Span style=\"{}\">{}</Span>",
+                            xml(&style),
+                            xml(value)
+                        ));
+                    } else if run.has_tag_name((A, "br")) {
+                        spans.push_str("<br/>");
+                    }
+                }
+            }
+            let bodypr = child(body, A, "bodyPr");
+            let white_space = if bodypr.is_some_and(|p| p.attribute("wrap") == Some("none")) {
+                ";white-space:nowrap"
+            } else {
+                ""
+            };
+            let l = number(bodypr, "lIns", 91440);
+            let r = number(bodypr, "rIns", 91440);
+            let t = number(bodypr, "tIns", 45720);
+            let b = number(bodypr, "bIns", 45720);
+            format!(
+                "<Text id=\"{import_id}\" style=\"{pos};{}{white_space};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
+                xml(css)
+            )
+        } else if let Some(geom) = desc(n, A, "prstGeom") {
+            let shape = match geom.attribute("prst").unwrap_or("rect") {
+                "rect" | "roundRect" => "rect",
+                "ellipse" => "ellipse",
+                "line" => "line",
+                other => {
+                    self.loss(
+                        page,
+                        name,
+                        format!("preset shape {other} approximated as rectangle"),
+                    );
+                    "rect"
+                }
+            };
+            format!(
+                "<Shape id=\"{import_id}\" shape=\"{shape}\" style=\"{pos};{}\"/>",
+                xml(css)
+            )
+        } else if let Some(custom) = desc(n, A, "custGeom") {
+            if let Some((data, vb)) = custom_path(custom) {
+                format!(
+                    "<Path id=\"{import_id}\" d=\"{}\" viewBox=\"{} {}\" style=\"{pos};{}\"/>",
+                    xml(&data),
+                    vb[0],
+                    vb[1],
+                    xml(css)
+                )
+            } else {
+                self.loss(page, name, "custom path needs unsupported guide evaluation");
+                String::new()
+            }
+        } else if child(n, P, "txBody").is_some() {
+            // Empty text placeholders without shape geometry are retained,
+            // but paragraph markers and insets do not invent visible text.
+            // Shapes/paths with an empty txBody take their geometry branch.
+            format!("<Text id=\"{import_id}\" style=\"{pos};{}\"/>", xml(css))
+        } else {
+            self.loss(page, name, "object not reconstructable");
+            String::new()
+        })
     }
 }
 

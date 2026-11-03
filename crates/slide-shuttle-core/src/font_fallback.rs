@@ -98,7 +98,7 @@ pub(crate) fn apply(deck: &mut Deck, fallback: &str, text: &TextEngine) -> Resul
             for message in changes {
                 diagnostics.push(Diagnostic {
                     code: "font_substitution".into(),
-                    severity: "warning".into(),
+                    severity: Severity::Warning,
                     page: page.into(),
                     node_id: node.id.clone(),
                     message,

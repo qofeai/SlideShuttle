@@ -248,11 +248,7 @@ fn run(cli: Cli) -> Result<()> {
                     )));
                 }
             }
-            let base = Baseline::new(
-                doc.deck().clone(),
-                snapshot,
-                doc.resource_profile().into(),
-            )?;
+            let base = Baseline::new(doc.deck().clone(), snapshot, doc.resource_profile().into())?;
             let dir = input
                 .input
                 .parent()

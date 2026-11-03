@@ -41,10 +41,10 @@ pub(crate) fn item_path(item: &Item) -> Result<Vec<Command>> {
         }
         return Ok(commands);
     }
-    if matches!(&item.kind,Draw::Shape(s) if s=="line") {
+    if matches!(item.kind, Draw::Shape(ShapeKind::Line)) {
         return Ok(vec![Command::M(x, y), Command::L(x + w, y + h)]);
     }
-    if matches!(&item.kind,Draw::Shape(s) if s=="ellipse") {
+    if matches!(item.kind, Draw::Shape(ShapeKind::Ellipse)) {
         let (a, b, cx, cy) = (w / 2.0, h / 2.0, x + w / 2.0, y + h / 2.0);
         let k = 0.5522848;
         return Ok(vec![
