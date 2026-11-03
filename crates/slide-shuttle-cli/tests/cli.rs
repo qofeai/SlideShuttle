@@ -28,7 +28,7 @@ fn success(output: Output) -> Value {
 }
 fn setup() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("source.xml"),r#"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="s"><Text id="t" style="width:500px;height:100px">Original body</Text></Slide></Deck>"#).unwrap();
+    fs::write(dir.path().join("source.xml"),r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="s"><Text id="t" style="width:500px;height:100px">Original body</Text></Slide></Deck>"#).unwrap();
     dir
 }
 
@@ -251,7 +251,11 @@ fn actual_external_edit_and_animation_block_export() {
 #[test]
 fn declared_resource_cannot_escape_project_root() {
     let root = setup();
-    fs::write(root.path().join("source.xml"),r#"<Deck version="1"><Font family="DejaVu Sans" src="../outside.ttf"/><Slide id="s"/></Deck>"#).unwrap();
+    fs::write(
+        root.path().join("source.xml"),
+        r#"<Deck><Font family="DejaVu Sans" src="../outside.ttf"/><Slide id="s"/></Deck>"#,
+    )
+    .unwrap();
     let result = run(root.path(), &["check", "source.xml"], false);
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("relative paths"));
@@ -295,5 +299,59 @@ fn standalone_measurement_reports_actual_font_geometry() {
         )
         .status
         .success()
+    );
+}
+
+#[test]
+fn cli_loads_multi_file_projects_and_checks_one_page() {
+    let root = tempfile::tempdir().unwrap();
+    let p = root.path();
+    fs::create_dir_all(p.join("pages")).unwrap();
+    fs::write(p.join("deck.xml"), r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Library src="system.xml"/><Slide src="pages/a.xml"/><Slide src="pages/b.xml"/></Deck>"#).unwrap();
+    fs::write(
+        p.join("system.xml"),
+        r#"<Library><Style name="t">width:500px;height:60px</Style></Library>"#,
+    )
+    .unwrap();
+    fs::write(
+        p.join("pages/a.xml"),
+        r#"<Slide id="a"><Text id="t" class="t">A</Text></Slide>"#,
+    )
+    .unwrap();
+    fs::write(p.join("pages/b.xml"), r#"<Slide id="b"><Text id="t" class="t" style="width:9px">Too long for this</Text></Slide>"#).unwrap();
+    assert!(
+        success(run(p, &["check", "deck.xml", "--page", "a"], true))["valid"]
+            .as_bool()
+            .unwrap()
+    );
+    let failed = run(p, &["check", "deck.xml"], true);
+    assert!(!failed.status.success());
+    let report: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(report["diagnostics"][0]["source"]["file"], "pages/b.xml");
+    success(run(
+        p,
+        &["render", "deck.xml", "--page", "a", "--out", "one"],
+        true,
+    ));
+    fs::write(
+        p.join("pages/b.xml"),
+        r#"<Slide id="b"><Text id="t" class="t">B</Text></Slide>"#,
+    )
+    .unwrap();
+    success(run(
+        p,
+        &["render", "deck.xml", "--page", "b", "--out", "two"],
+        true,
+    ));
+    assert!(p.join("one/slide-001.png").exists() && p.join("two/slide-002.png").exists());
+    fs::write(
+        p.join("deck.xml"),
+        r#"<Deck><Slide src="../outside.xml"/></Deck>"#,
+    )
+    .unwrap();
+    let escaped = run(p, &["check", "deck.xml"], true);
+    assert!(
+        String::from_utf8_lossy(&escaped.stderr)
+            .contains("references must be relative paths inside the project")
     );
 }

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const FORMAT_VERSION: &str = "1";
 pub const EMU_PER_PX: f64 = 9525.0;
 
 #[derive(Debug, thiserror::Error)]
@@ -20,18 +19,32 @@ pub enum Error {
     Source(Vec<SourceError>),
 }
 /// An authoring error tied to the element that caused it.
-#[derive(Clone, Debug, Serialize, Deserialize, thiserror::Error)]
-#[error("line {line}, column {column}: {message}")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SourceError {
+    /// Project-relative file; empty for a single source string.
+    pub file: String,
     pub line: u32,
     pub column: u32,
     pub message: String,
+}
+impl std::fmt::Display for SourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.file.is_empty() {
+            write!(f, "{} ", self.file)?;
+        }
+        write!(
+            f,
+            "line {}, column {}: {}",
+            self.line, self.column, self.message
+        )
+    }
 }
 /// Attach a source position unless the error is already located.
 pub(crate) fn at(source: &Source, error: Error) -> Error {
     match error {
         Error::Source(_) => error,
         other => Error::Source(vec![SourceError {
+            file: source.file.clone(),
             line: source.line,
             column: source.column,
             message: other.to_string(),
@@ -48,7 +61,6 @@ pub type Css = BTreeMap<String, String>;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Deck {
-    pub version: String,
     pub title: String,
     pub width: f32,
     pub height: f32,
@@ -70,6 +82,8 @@ pub struct Slide {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Source {
+    /// Project-relative file; empty for a single source string.
+    pub file: String,
     pub line: u32,
     pub column: u32,
 }

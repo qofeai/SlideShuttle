@@ -1,4 +1,4 @@
-<Deck version="1" title="SlideShuttle 渲染能力与可选组件" font-family="Noto Sans CJK SC">
+<Deck title="SlideShuttle 渲染能力与可选组件" font-family="Noto Sans CJK SC">
   <Asset id="palette" src="palette.png"/>
   <Token name="ink" value="#142B36"/>
   <Token name="accent" value="#087E6D"/>

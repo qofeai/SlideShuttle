@@ -22,16 +22,25 @@ pub fn read(path: &Path, max: u64) -> Result<Vec<u8>> {
     }
     Ok(b)
 }
-/// Read the source and exactly the fonts and images it declares.
-pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(String, Resources)> {
-    let data = read(input, 4 * 1024 * 1024)?;
-    let source = String::from_utf8(data).map_err(|_| fail("source must be UTF-8"))?;
-    let deck = slide_shuttle_core::parse(&source)?;
+fn text(path: &Path) -> Result<String> {
+    String::from_utf8(read(path, 4 * 1024 * 1024)?)
+        .map_err(|_| fail(format!("source must be UTF-8: {}", path.display())))
+}
+/// Read the project (entry, libraries, pages) and exactly the fonts and images it declares.
+/// Every referenced path resolves inside the entry file's directory.
+pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resources)> {
     let root = input
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."))
         .canonicalize()?;
+    let entry = input
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let deck = slide_shuttle_core::parse_project(&entry, &text(input)?, |path| {
+        text(&local(&root, path)?)
+    })?;
     let mut resources = Resources::default();
     for font in &deck.fonts {
         resources.fonts.push(FontResource {
@@ -74,7 +83,7 @@ pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(String, Resou
     if total > 256 * 1024 * 1024 {
         return Err(fail("resource budget exceeds 256 MiB"));
     }
-    Ok((source, resources))
+    Ok((deck, resources))
 }
 fn local(root: &Path, src: &str) -> Result<std::path::PathBuf> {
     let p = Path::new(src);

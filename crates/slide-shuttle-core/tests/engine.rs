@@ -26,7 +26,7 @@ fn resources() -> Resources {
 }
 fn doc(body: &str) -> String {
     format!(
-        r#"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p">{body}</Slide></Deck>"#
+        r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p">{body}</Slide></Deck>"#
     )
 }
 fn simple() -> String {
@@ -97,7 +97,7 @@ fn native_render_and_editable_package_are_repeatable() {
 }
 #[test]
 fn grid_span_flex_and_component_ids() {
-    let source = r#"<Deck version="1" font-family="DejaVu Sans"><Token name="gap" value="20px"/><Component name="Label"><Text id="text" style="height:50px">${value}</Text></Component><Slide id="p"><Box id="g" style="width:600px;display:grid;grid-template-columns:1fr 2fr;gap:var(--gap)"><Use id="a" component="Label" value="First"/><Use id="b" component="Label" value="Second"/><Text id="wide" style="grid-column:1 / span 2;height:50px">Wide</Text></Box></Slide></Deck>"#;
+    let source = r#"<Deck font-family="DejaVu Sans"><Token name="gap" value="20px"/><Component name="Label"><Text id="text" style="height:50px">${value}</Text></Component><Slide id="p"><Box id="g" style="width:600px;display:grid;grid-template-columns:1fr 2fr;gap:var(--gap)"><Use id="a" component="Label" value="First"/><Use id="b" component="Label" value="Second"/><Text id="wide" style="grid-column:1 / span 2;height:50px">Wide</Text></Box></Slide></Deck>"#;
     let (_, _, s, _) = compile(source);
     let items = &s.pages[0].items;
     let a = items.iter().find(|i| i.id == "a/text").unwrap();
@@ -118,25 +118,19 @@ fn rejects_unknown_attributes_css_and_inline_layout() {
         assert!(parse(&doc(inner)).is_err(), "{inner}");
     }
     assert!(
-        parse(
-            r#"<Deck version="1"><Style name="unused">unknown:yes</Style><Slide id="p"/></Deck>"#
-        )
-        .is_err()
+        parse(r#"<Deck><Style name="unused">unknown:yes</Style><Slide id="p"/></Deck>"#).is_err()
     );
 }
 #[test]
 fn tokens_entities_and_components_are_bounded() {
-    assert!(
-        parse(r#"<!DOCTYPE Deck [<!ENTITY x "bad">]><Deck version="1"><Slide id="p"/></Deck>"#)
-            .is_err()
-    );
-    assert!(parse(r#"<Deck version="1"><Token name="x" value="var(--x)"/><Slide id="p"><Box id="b" style="width:var(--x)"/></Slide></Deck>"#).is_err());
-    assert!(parse(r#"<Deck version="1"><Component name="C"><Use id="r" component="C"/></Component><Slide id="p"><Use id="x" component="C"/></Slide></Deck>"#).is_err());
+    assert!(parse(r#"<!DOCTYPE Deck [<!ENTITY x "bad">]><Deck><Slide id="p"/></Deck>"#).is_err());
+    assert!(parse(r#"<Deck><Token name="x" value="var(--x)"/><Slide id="p"><Box id="b" style="width:var(--x)"/></Slide></Deck>"#).is_err());
+    assert!(parse(r#"<Deck><Component name="C"><Use id="r" component="C"/></Component><Slide id="p"><Use id="x" component="C"/></Slide></Deck>"#).is_err());
     assert!(parse(&doc(r#"<Path id="x" d="m 1 2 l 3 4"/>"#)).is_err());
 }
 #[test]
 fn later_declarations_override_shorthands_like_css() {
-    let source = r##"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Style name="pad">padding-top:40px</Style><Slide id="p"><Box id="a" style="padding-top:50px;padding:0;width:100px;height:100px"><Shape id="x" style="width:10px;height:10px;background:#000"/></Box><Box id="b" class="pad" style="padding:0;width:100px;height:100px"><Shape id="y" style="width:10px;height:10px;background-color:#000;background:#FFF"/></Box></Slide></Deck>"##;
+    let source = r##"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Style name="pad">padding-top:40px</Style><Slide id="p"><Box id="a" style="padding-top:50px;padding:0;width:100px;height:100px"><Shape id="x" style="width:10px;height:10px;background:#000"/></Box><Box id="b" class="pad" style="padding:0;width:100px;height:100px"><Shape id="y" style="width:10px;height:10px;background-color:#000;background:#FFF"/></Box></Slide></Deck>"##;
     let (_, _, s, _) = compile(source);
     let item = |id: &str| s.pages[0].items.iter().find(|i| i.id == id).unwrap();
     assert_eq!(item("x").rect.y, 0.0);
@@ -147,7 +141,7 @@ fn later_declarations_override_shorthands_like_css() {
 fn many_token_references_are_not_cycles() {
     let refs = ["var(--p)"; 4].join(" ");
     let source = format!(
-        r#"<Deck version="1" font-family="DejaVu Sans"><Token name="p" value="1px"/><Slide id="p"><Box id="b" style="padding:{refs};margin:{refs};gap:var(--p);left:var(--p);top:var(--p);width:var(--p);height:var(--p)"/></Slide></Deck>"#
+        r#"<Deck font-family="DejaVu Sans"><Token name="p" value="1px"/><Slide id="p"><Box id="b" style="padding:{refs};margin:{refs};gap:var(--p);left:var(--p);top:var(--p);width:var(--p);height:var(--p)"/></Slide></Deck>"#
     );
     assert!(parse(&source).is_ok());
     let fan = (0..15)
@@ -159,7 +153,7 @@ fn many_token_references_are_not_cycles() {
         })
         .collect::<String>();
     let source = format!(
-        r#"<Deck version="1"><Token name="t0" value="1px"/>{fan}<Slide id="p"><Box id="b" style="width:var(--t15)"/></Slide></Deck>"#
+        r#"<Deck><Token name="t0" value="1px"/>{fan}<Slide id="p"><Box id="b" style="width:var(--t15)"/></Slide></Deck>"#
     );
     assert!(parse(&source).unwrap_err().to_string().contains("64 KiB"));
 }
@@ -171,11 +165,11 @@ fn errors_name_every_failing_element_with_its_position() {
     .unwrap_err()
     .to_string();
     assert!(
-        error.contains("line 1, column 88: unsupported CSS property filter"),
+        error.contains("line 1, column 76: unsupported CSS property filter"),
         "{error}"
     );
     assert!(
-        error.contains("line 1, column 139: Shape shape: unknown variant `star`, expected one of `rect`, `ellipse`, `line`"),
+        error.contains("line 1, column 127: Shape shape: unknown variant `star`, expected one of `rect`, `ellipse`, `line`"),
         "{error}"
     );
     let d = parse(&doc(
@@ -184,7 +178,72 @@ fn errors_name_every_failing_element_with_its_position() {
     .unwrap();
     let error = layout(&d, &resources()).unwrap_err().to_string();
     assert!(
-        error.starts_with("line 1, column 88: font face not supplied"),
+        error.starts_with("line 1, column 76: font face not supplied"),
+        "{error}"
+    );
+}
+fn project(files: &[(&str, &str)]) -> Result<Deck> {
+    let files = files.iter().copied().collect::<BTreeMap<_, _>>();
+    parse_project("deck.xml", files["deck.xml"], |path| {
+        files
+            .get(path)
+            .map(|s| s.to_string())
+            .ok_or_else(|| Error::Invalid(format!("missing {path}")))
+    })
+}
+#[test]
+fn projects_split_pages_and_share_libraries() {
+    let deck = project(&[
+        ("deck.xml", r#"<Deck font-family="DejaVu Sans"><Library src="design/system.xml"/><Slide src="pages/./a.xml"/><Slide id="inline"><Box id="title"/></Slide><Slide src="pages/b.xml"/></Deck>"#),
+        ("design/system.xml", r#"<Library><Token name="gap" value="8px"/><Style name="h">height:40px;padding:var(--gap)</Style><Component name="Label"><Text id="text" class="h">${value}</Text></Component></Library>"#),
+        ("pages/a.xml", r#"<Slide id="a"><Text id="title" class="h">A</Text><Use id="l" component="Label" value="x"/></Slide>"#),
+        ("pages/b.xml", r#"<Slide id="b"><Text id="title" class="h">B</Text></Slide>"#),
+    ])
+    .unwrap();
+    assert_eq!(
+        deck.slides
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "inline", "b"]
+    );
+    let a = &deck.slides[0].nodes;
+    assert_eq!((a[0].id.as_str(), a[1].id.as_str()), ("title", "l/text"));
+    assert_eq!(a[0].style["padding-top"], "8px");
+    assert_eq!(a[1].source.file, "design/system.xml");
+    assert_eq!(deck.slides[2].nodes[0].source.file, "pages/b.xml");
+    let (_, _, s, _) = compile(
+        r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="a"><Text id="t" style="height:40px">A</Text></Slide><Slide id="b"><Text id="t" style="height:40px">B</Text></Slide></Deck>"#,
+    );
+    assert_eq!(s.pages[1].items[0].id, "t");
+}
+#[test]
+fn project_errors_name_their_file_and_stay_inside_the_project() {
+    let error = project(&[
+        ("deck.xml", r#"<Deck><Slide src="pages/a.xml"/><Slide src="../secret.xml"/><Slide src="pages/missing.xml"/></Deck>"#),
+        ("pages/a.xml", "<Slide id=\"a\">\n  <Text id=\"t\" style=\"filter:x\">A</Text><Text id=\"t\">B</Text></Slide>"),
+    ])
+    .unwrap_err()
+    .to_string();
+    for expected in [
+        "deck.xml line 1, column 33: ../secret.xml: references must be relative paths inside the project",
+        "deck.xml line 1, column 61: missing pages/missing.xml",
+        "pages/a.xml line 2, column 3: unsupported CSS property filter",
+        "pages/a.xml line 2, column 41: invalid or duplicate id: t",
+    ] {
+        assert!(error.contains(expected), "{expected}\n{error}");
+    }
+    let error = project(&[
+        (
+            "deck.xml",
+            r#"<Deck><Library src="lib.xml"/><Slide id="s"/></Deck>"#,
+        ),
+        ("lib.xml", r#"<Library><Slide id="x"/></Library>"#),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("lib.xml line 1, column 10: a <Library> holds only"),
         "{error}"
     );
 }

@@ -41,7 +41,7 @@ target/debug/slide-shuttle export examples/demo.xml --out examples/output/demo.p
 ## 语言示例
 
 ```xml
-<Deck version="1" width="1280px" height="720px" font-family="DejaVu Sans">
+<Deck width="1280px" height="720px" font-family="DejaVu Sans">
   <Font family="DejaVu Sans" src="fonts/DejaVuSans.ttf"/>
   <Slide id="intro" background="#F3F8F6">
     <Box id="columns" style="display:grid;grid-template-columns:2fr 1fr;gap:32px;padding:56px">
@@ -53,6 +53,8 @@ target/debug/slide-shuttle export examples/demo.xml --out examples/output/demo.p
   </Slide>
 </Deck>
 ```
+
+一份稿可以拆成入口 `deck.xml`、共享库 `<Library src>` 和每页一个文件的 `<Slide src>`，页内元素 ID 只需在本页唯一，`check` / `render --page <id>` 可只处理一页，见 [项目结构](docs/LANGUAGE.md#项目结构)。
 
 支持 `Box`、`Group`、`Text` / `Span` / `br`、`Image`、`Shape`、`Path`、`Table`、`Chart`，以及 `Token`、`Style`、`Component` / `Use`。这是一门静态语言，不能执行 JavaScript。完整语法与限制见 [语言说明](docs/LANGUAGE.md)。
 

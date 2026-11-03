@@ -19,7 +19,7 @@ fn base() -> &'static Vec<(String, Vec<u8>)> {
             }],
             images: Default::default(),
         };
-        let source = r##"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="s"><Text id="t" style="width:300px;height:40px">Hi</Text><Shape id="r" style="width:20px;height:20px;background:#09A88F"/></Slide></Deck>"##;
+        let source = r##"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="s"><Text id="t" style="width:300px;height:40px">Hi</Text><Shape id="r" style="width:20px;height:20px;background:#09A88F"/></Slide></Deck>"##;
         let pptx = Compiler::new(resources).unwrap().compile(source).unwrap().export_pptx().unwrap();
         let mut zip = zip::ZipArchive::new(Cursor::new(pptx)).unwrap();
         (0..zip.len())

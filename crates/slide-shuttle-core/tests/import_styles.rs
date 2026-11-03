@@ -22,7 +22,8 @@ fn resources() -> Resources {
     }
 }
 fn parts() -> BTreeMap<String, Vec<u8>> {
-    let source = r#"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p"/></Deck>"#;
+    let source =
+        r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p"/></Deck>"#;
     let scene = layout(&parse(source).unwrap(), &resources()).unwrap();
     let bytes = export_pptx(&scene, &resources(), "styles-fixture").unwrap();
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -428,7 +429,7 @@ fn inherited_master_background_and_image_opacity_are_rendered() {
     .write_to(&mut bytes, image::ImageFormat::Png)
     .unwrap();
     r.images.insert("photo".into(), bytes.into_inner());
-    let deck=parse(r#"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p"><Image id="photo" src="photo" style="width:100px;height:100px;opacity:0.35"/></Slide></Deck>"#).unwrap();
+    let deck=parse(r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p"><Image id="photo" src="photo" style="width:100px;height:100px;opacity:0.35"/></Slide></Deck>"#).unwrap();
     let scene = layout(&deck, &r).unwrap();
     let bytes = export_pptx(&scene, &r, "image-alpha").unwrap();
     let imp = import_pptx(&bytes).unwrap();

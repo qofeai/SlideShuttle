@@ -230,10 +230,14 @@ pub fn review(
             // A source deletion of an externally edited object is a conflict, even when presence matches B/E.
             let authored_removal = b.is_some_and(|o| {
                 let id = o.name.strip_prefix("d:").unwrap_or(&o.name);
-                let id = id.strip_suffix("::background").unwrap_or(id);
+                let id = format!(
+                    "{}:{}",
+                    o.page,
+                    id.strip_suffix("::background").unwrap_or(id)
+                );
                 old_nodes
-                    .get(id)
-                    .is_some_and(|old| new_nodes.get(id) != Some(old))
+                    .get(&id)
+                    .is_some_and(|old| new_nodes.get(&id) != Some(old))
             });
             let status = if b == e && p.is_none() && authored_removal {
                 "source_change"
@@ -282,8 +286,12 @@ pub fn review(
         ] {
             let mut status = classify(&bv, &ev, &pv);
             if status == "source_change" && prop == "geometry" {
-                let id = b.name.strip_prefix("d:").unwrap_or(&b.name);
-                if old_nodes.get(id) == new_nodes.get(id) {
+                let id = format!(
+                    "{}:{}",
+                    b.page,
+                    b.name.strip_prefix("d:").unwrap_or(&b.name)
+                );
+                if old_nodes.get(&id) == new_nodes.get(&id) {
                     status = "derived_change";
                 }
             }
@@ -414,17 +422,18 @@ fn classify(b: &Value, e: &Value, p: &Value) -> &'static str {
 fn is_blocking(s: &str) -> bool {
     !matches!(s, "clean" | "source_change" | "derived_change" | "adopted")
 }
+/// Authored nodes keyed like snapshot objects, `page-N:id`; IDs are unique per slide.
 fn nodes(deck: &Deck) -> BTreeMap<String, Value> {
-    fn visit(n: &Node, out: &mut BTreeMap<String, Value>) {
-        out.insert(n.id.clone(), json!([n.style, n.kind]));
+    fn visit(page: &str, n: &Node, out: &mut BTreeMap<String, Value>) {
+        out.insert(format!("{page}:{}", n.id), json!([n.style, n.kind]));
         for c in &n.children {
-            visit(c, out);
+            visit(page, c, out);
         }
     }
     let mut out = BTreeMap::new();
-    for s in &deck.slides {
+    for (i, s) in deck.slides.iter().enumerate() {
         for n in &s.nodes {
-            visit(n, &mut out);
+            visit(&format!("page-{}", i + 1), n, &mut out);
         }
     }
     out

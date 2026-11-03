@@ -76,7 +76,10 @@ impl Compiler {
         })
     }
     pub fn compile(&mut self, source: &str) -> Result<CompiledDocument> {
-        let mut deck = parse(source)?;
+        self.compile_deck(parse(source)?)
+    }
+    /// Compile a deck parsed elsewhere, e.g. a multi-file project from [`parse_project`].
+    pub fn compile_deck(&mut self, mut deck: Deck) -> Result<CompiledDocument> {
         let substitutions = if let Some(family) = &self.fallback_family {
             crate::font_fallback::apply(&mut deck, family, &self.text)?
         } else {
