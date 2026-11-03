@@ -13,6 +13,12 @@ let imageUrl;
 let currentPng;
 let documentDiagnostics = [];
 let fontLoadController;
+let presenting = false;
+let presentationPage = 0;
+let presentationStep = 0;
+let pageReports = [];
+let deckWidth = 0;
+let deckHeight = 0;
 /** Sources being previewed: entry path plus every project file, edited one file at a time. */
 let project = { entry: 'demo.xml', files: {} };
 let currentFile = 'demo.xml';
@@ -26,6 +32,10 @@ function controls() {
   $('recompile').disabled = busy || !hasResources;
   for (const id of ['png', 'pdf']) $(id).disabled = busy || !pages;
   $('pptx').disabled = busy || !pages || imported;
+  $('present').disabled = busy || !pages;
+  $('show-previous').disabled = busy || (presentationPage === 0 && presentationStep === 0);
+  $('show-next').disabled = busy || (presentationPage + 1 >= pages && presentationStep + 1 >= (pageReports[presentationPage]?.stepCount ?? 1));
+  $('show-png').disabled = busy;
   $('page-label').textContent = pages ? `${page + 1} / ${pages}` : '尚未载入';
 }
 function setBusy(value) {
@@ -34,7 +44,9 @@ function setBusy(value) {
   controls();
 }
 function clearDocument() {
+  exitPresentation();
   pages = 0; currentPng = undefined;
+  pageReports = [];
   documentDiagnostics = [];
   if (imageUrl) URL.revokeObjectURL(imageUrl);
   imageUrl = undefined;
@@ -66,6 +78,8 @@ function editedProject() {
 function applyDocument(result) {
   hasResources = true;
   pages = result.report.pageCount; page = 0; imported = result.imported;
+  pageReports = result.report.pages;
+  deckWidth = result.report.width; deckHeight = result.report.height;
   showProject(result.project, currentFile);
   documentDiagnostics = result.report.diagnostics;
   const substitutions = documentDiagnostics.filter(d => d.code === 'font_substitution');
@@ -75,6 +89,7 @@ function applyDocument(result) {
   }
   $('diagnostics').textContent = JSON.stringify({ stats: result.stats, diagnostics: result.report.diagnostics }, null, 2);
   $('canvas').style.aspectRatio = `${result.report.width} / ${result.report.height}`;
+  $('stage').style.setProperty('--slide-ratio', String(deckWidth / deckHeight));
   $('pptx-note').hidden = !imported;
   if (result.losses.length) {
     $('losses').hidden = false;
@@ -200,6 +215,73 @@ for (const [id, delta] of [['previous', -1], ['next', 1]]) $(id).onclick = async
   try { await showPage(page + delta, operation); } catch (error) { showError(error, operation); }
   finally { if (operation === operationId) setBusy(false); }
 };
+function exitPresentation() {
+  if (!presenting) return;
+  presenting = false;
+  document.body.dataset.presenting = 'false';
+  $('frame').hidden = true;
+  // Drop the backing surface as soon as the client leaves presentation mode.
+  $('frame').width = $('frame').height = 0;
+  $('slide').hidden = !currentPng;
+  $('show-controls').hidden = $('show-help').hidden = true;
+  if (document.fullscreenElement === $('stage')) document.exitFullscreen?.().catch(() => {});
+  $('present').focus();
+}
+async function showFrame(index, step) {
+  const operation = operationId;
+  setBusy(true);
+  try {
+    // Bound the display surface to the viewport and the document's native resolution.
+    const scale = Math.min(1, Math.max(0.1, Math.min(innerWidth / deckWidth, (innerHeight - 110) / deckHeight) * (devicePixelRatio || 1)));
+    const result = await client.renderFrame(index, step, scale);
+    if (!presenting || operation !== operationId) return;
+    const frame = $('frame');
+    frame.width = result.width; frame.height = result.height;
+    frame.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(result.bytes), result.width, result.height), 0, 0);
+    presentationPage = index; presentationStep = step;
+    frame.setAttribute('aria-label', `第 ${index + 1} 页，第 ${step} 步`);
+    $('step-label').textContent = `${index + 1} / ${pages} · 步骤 ${step} / ${(pageReports[index]?.stepCount ?? 1) - 1}`;
+    window.dispatchEvent(new CustomEvent('slideshuttle:frame', { detail: { page: index, step, width: result.width, height: result.height, stats: result.stats } }));
+  } catch (error) { exitPresentation(); showError(error, operation); }
+  finally { if (operation === operationId) setBusy(false); }
+}
+function advancePresentation(delta) {
+  if (!presenting || busy) return;
+  let index = presentationPage, step = presentationStep + delta;
+  if (step >= (pageReports[index]?.stepCount ?? 1)) { index++; step = 0; }
+  else if (step < 0) { index--; step = (pageReports[index]?.stepCount ?? 1) - 1; }
+  if (index >= 0 && index < pages) void showFrame(index, step);
+}
+$('present').onclick = () => {
+  if (busy || !pages) return;
+  presenting = true; presentationPage = page; presentationStep = 0;
+  document.body.dataset.presenting = 'true';
+  $('slide').hidden = true; $('frame').hidden = false;
+  $('frame').focus();
+  $('show-controls').hidden = $('show-help').hidden = false;
+  $('stage').requestFullscreen?.().catch(() => {}); // The fixed stage also works without this API.
+  void showFrame(page, 0);
+};
+$('show-exit').onclick = exitPresentation;
+$('show-previous').onclick = () => advancePresentation(-1);
+$('show-next').onclick = $('canvas').onclick = () => advancePresentation(1);
+$('show-png').onclick = async () => {
+  const operation = operationId, index = presentationPage, step = presentationStep;
+  setBusy(true);
+  try {
+    const result = await client.exportStepPng(index, step);
+    if (operation === operationId && presenting) save(result.bytes, 'image/png', `SlideShuttle-${index + 1}-step-${step}.png`);
+  } catch (error) { showError(error, operation); }
+  finally { if (operation === operationId) setBusy(false); }
+};
+document.addEventListener('keydown', event => {
+  if (!presenting) return;
+  if (event.key === 'Escape') { event.preventDefault(); exitPresentation(); }
+  else if (!(event.key === ' ' && event.target.closest('button')) && ['ArrowRight', 'ArrowDown', ' ', 'PageDown', 'ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) {
+    event.preventDefault(); advancePresentation(['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key) ? -1 : 1);
+  }
+});
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) exitPresentation(); });
 $('cancel').onclick = () => {
   operationId++; fontLoadController?.abort(); fontLoadController = undefined;
   client.cancel(); workerReady = false; hasResources = false; clearDocument(); setBusy(false);

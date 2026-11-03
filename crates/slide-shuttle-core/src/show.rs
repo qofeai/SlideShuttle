@@ -300,67 +300,96 @@ impl Default for Look {
     }
 }
 
-/// The page before the first click, then after each click: the looks that differ from
-/// the static page. Elements whose first animation is an entrance start hidden.
-pub fn steps(show: &Show) -> Vec<BTreeMap<String, Look>> {
+/// Number of snapshots: before the first click (after automatic effects), then after
+/// each click. This does not allocate all intermediate state maps.
+pub fn step_count(show: &Show) -> usize {
+    1 + show
+        .animations
+        .iter()
+        .filter(|a| a.trigger == Trigger::Click)
+        .count()
+}
+
+fn initial_looks(show: &Show) -> BTreeMap<String, Look> {
     let mut looks = BTreeMap::<String, Look>::new();
     for a in &show.animations {
-        if !looks.contains_key(&a.target) {
-            looks.insert(
-                a.target.clone(),
-                Look {
-                    hidden: entrance(a.effect),
-                    ..Look::default()
-                },
-            );
+        looks.entry(a.target.clone()).or_insert_with(|| Look {
+            hidden: entrance(a.effect),
+            ..Look::default()
+        });
+    }
+    looks
+}
+
+fn play(show: &Show, looks: &mut BTreeMap<String, Look>, g: &Group) {
+    for i in g.subs.iter().flat_map(|(_, s)| s) {
+        let a = &show.animations[*i];
+        let look = looks.get_mut(&a.target).unwrap();
+        match a.effect {
+            e if entrance(e) => look.hidden = false,
+            e if exit(e) => look.hidden = true,
+            Effect::Transparency => look.opacity = a.amount.unwrap_or(1.0),
+            Effect::FillColor => look.fill = a.color,
+            Effect::GrowShrink => look.scale *= 1.5,
+            Effect::MotionPath => {
+                if let Some(
+                    crate::render::Command::M(x, y)
+                    | crate::render::Command::L(x, y)
+                    | crate::render::Command::C(.., x, y),
+                ) = a
+                    .path
+                    .as_deref()
+                    .and_then(|p| motion_path(p).ok())
+                    .and_then(|c| {
+                        c.into_iter()
+                            .rev()
+                            .find(|c| !matches!(c, crate::render::Command::Z))
+                    })
+                {
+                    look.offset.0 += x;
+                    look.offset.1 += y;
+                }
+            }
+            _ => {}
         }
     }
-    let mut out = Vec::new();
-    let play = |looks: &mut BTreeMap<String, Look>, g: &Group| {
-        for i in g.subs.iter().flat_map(|(_, s)| s) {
-            let a = &show.animations[*i];
-            let look = looks.get_mut(&a.target).unwrap();
-            match a.effect {
-                e if entrance(e) => look.hidden = false,
-                e if exit(e) => look.hidden = true,
-                Effect::Transparency => look.opacity = a.amount.unwrap_or(1.0),
-                Effect::FillColor => look.fill = a.color,
-                Effect::GrowShrink => look.scale *= 1.5,
-                Effect::MotionPath => {
-                    if let Some(
-                        crate::render::Command::M(x, y)
-                        | crate::render::Command::L(x, y)
-                        | crate::render::Command::C(.., x, y),
-                    ) = a
-                        .path
-                        .as_deref()
-                        .and_then(|p| motion_path(p).ok())
-                        .and_then(|c| {
-                            c.into_iter()
-                                .rev()
-                                .find(|c| !matches!(c, crate::render::Command::Z))
-                        })
-                    {
-                        look.offset.0 += x;
-                        look.offset.1 += y;
-                    }
-                }
-                _ => {}
-            }
-        }
-    };
+}
+
+/// One click's settled state. Duration, easing and transitions are not sampled.
+/// Unlike `steps`, this retains only the requested state, even for long click sequences.
+pub fn step(show: &Show, index: usize) -> Result<BTreeMap<String, Look>> {
+    let groups = groups(&show.animations);
+    let mut rest = groups.iter().peekable();
+    let mut looks = initial_looks(show);
+    if let Some(g) = rest.next_if(|g| g.auto) {
+        play(show, &mut looks, g);
+    }
+    if index > rest.len() {
+        return Err(invalid("slide-show step index out of range"));
+    }
+    for g in rest.take(index) {
+        play(show, &mut looks, g);
+    }
+    looks.retain(|_, l| *l != Look::default());
+    Ok(looks)
+}
+
+/// The page before the first click, then after each click. Elements whose first
+/// animation is an entrance start hidden. Prefer `step` when only one state is needed.
+pub fn steps(show: &Show) -> Vec<BTreeMap<String, Look>> {
+    let mut looks = initial_looks(show);
     let groups = groups(&show.animations);
     let mut rest = groups.iter().peekable();
     if let Some(g) = rest.next_if(|g| g.auto) {
-        play(&mut looks, g);
+        play(show, &mut looks, g);
     }
-    out.push(looks.clone());
+    let mut out = vec![looks.clone()];
     for g in rest {
-        play(&mut looks, g);
+        play(show, &mut looks, g);
         out.push(looks.clone());
     }
-    for step in &mut out {
-        step.retain(|_, l| *l != Look::default());
+    for state in &mut out {
+        state.retain(|_, l| *l != Look::default());
     }
     out
 }

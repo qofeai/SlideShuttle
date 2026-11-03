@@ -18,6 +18,11 @@
   .workspace{min-width:0}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
   #canvas{aspect-ratio:16/9;position:relative;background:#fff;box-shadow:0 12px 40px #102b3818;overflow:hidden;border-radius:8px;display:grid;place-items:center}
   #slide{width:100%;height:100%;object-fit:contain}#placeholder{padding:32px;text-align:center;color:#758b98}
+  #frame{width:100%;height:100%;object-fit:contain}#canvas{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+  body[data-presenting="true"]{overflow:hidden}
+  body[data-presenting="true"] #stage{position:fixed;inset:0;z-index:10;background:#08151c;display:flex;flex-direction:column;justify-content:center;padding:12px;gap:12px}
+  body[data-presenting="true"] #canvas{width:min(100%,calc((100dvh - 110px)*var(--slide-ratio)));flex-shrink:0;margin:auto;border-radius:0;cursor:pointer}
+  #show-controls{justify-content:center;color:#fff;font-size:13px}#show-help{margin:0;text-align:center;color:#b3cbd6;font-size:12px}
   #page-label{display:inline-block;min-width:82px;text-align:center;font-variant-numeric:tabular-nums}
   details{margin-top:18px}summary{cursor:pointer;color:#536b78;font-size:13px}
   select{display:block;width:100%;margin-top:12px;font:13px monospace}textarea{display:block;width:100%;height:280px;margin:12px 0;padding:14px;border:1px solid #c3d2dc;border-radius:8px;background:#fff;font:12px/1.5 monospace}
@@ -49,9 +54,13 @@
     <div class="toolbar">
       <span id="filename">中文示例</span>
       <div class="row"><button id="previous" disabled aria-label="上一页">←</button><span id="page-label">尚未载入</span><button id="next" disabled aria-label="下一页">→</button></div>
-      <div class="row"><button id="png" disabled>PNG</button><button id="pdf" disabled>PDF</button><button id="pptx" disabled>PPTX</button></div>
+      <div class="row"><button id="present" disabled>按步放映</button><button id="png" disabled>PNG</button><button id="pdf" disabled>PDF</button><button id="pptx" disabled>PPTX</button></div>
     </div>
-    <div id="canvas"><p id="placeholder">打开文稿后在这里预览。<br>翻页、图片绘制和导出均在本机完成。</p><img id="slide" hidden alt="当前演示页"></div>
+    <div id="stage">
+      <div id="canvas"><p id="placeholder">打开文稿后在这里预览。<br>翻页、图片绘制和导出均在本机完成。</p><img id="slide" hidden alt="当前演示页"><canvas id="frame" hidden tabindex="0" role="img" aria-label="当前放映步骤"></canvas></div>
+      <div id="show-controls" class="row" hidden><button id="show-previous" aria-label="上一步">←</button><span id="step-label" role="status" aria-live="polite"></span><button id="show-next" aria-label="下一步">→</button><button id="show-png">保存当前步骤</button><button id="show-exit">退出放映</button></div>
+      <p id="show-help" hidden>点击画面 / → / 空格前进，← 后退，Esc 退出。当前展示点击终态，暂不播放连续动画与翻页过渡。</p>
+    </div>
     <p id="pptx-note" class="note" hidden>导入稿提供重建预览和 PNG/PDF；PPTX 再导出请使用 CLI 检查差异与损失。</p>
     <p id="font-notice" role="status" hidden></p>
     <div id="losses" hidden><span id="loss-summary"></span><details><summary>查看重建限制</summary><pre id="loss-detail"></pre></details></div>

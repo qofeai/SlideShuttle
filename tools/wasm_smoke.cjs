@@ -14,6 +14,19 @@ assert(measure.width > 20, 'bullet measurement should explain the former narrow-
 const compiled = engine.compile(source);
 assert(compiled.pageCount > 0);
 assert.equal(JSON.parse(compiled.inspect()).valid, true);
+const animation = engine.compile('<Deck width="80px" height="40px"><Slide id="p"><Shape id="s" style="width:40px;height:40px;background:#FF0000"/><Animate target="s" effect="appear"/></Slide></Deck>');
+assert.equal(animation.stepCount(0), 2);
+const hidden = animation.renderRgbaStep(0, 0, 1);
+const shown = animation.renderRgbaStep(0, 1, 1);
+assert.equal(shown.length, 80 * 40 * 4);
+assert.deepEqual([...hidden.subarray(0, 4)], [255, 255, 255, 255]);
+assert.deepEqual([...shown.subarray(0, 4)], [255, 0, 0, 255]);
+assert(Buffer.from(shown).equals(Buffer.from(animation.renderRgba(0, 1))));
+assert(Buffer.from(animation.renderPngStep(0, 1, 1)).equals(Buffer.from(animation.renderPng(0, 1))));
+assert.throws(() => animation.renderRgbaStep(0, 2, 1), /step index out of range/);
+animation.free();
+// Continue exercising the source cache with the original document.
+engine.compile(source).free();
 console.error('WASM: checking source');
 const check = JSON.parse(engine.check(source));
 assert(check.valid, JSON.stringify(check));
@@ -39,7 +52,7 @@ assert.equal(imported.snapshot.pages.length, check.pages);
 assert(imported.files[imported.entry].includes('<Slide src="pages/page-1.xml"/>'));
 assert.equal(Object.keys(imported.files).length, check.pages + 1, 'import yields an entry plus one file per page');
 const statsBeforeEdit = JSON.parse(engine.stats());
-assert.equal(statsBeforeEdit.compilations, 1);
+assert.equal(statsBeforeEdit.compilations, 3);
 assert.equal(statsBeforeEdit.fontBuilds, 1);
 // The old immutable document remains renderable after resource invalidation and engine disposal.
 const oldPage = Buffer.from(compiled.renderPng(0, 1));
@@ -47,6 +60,7 @@ engine.clear();
 engine.free();
 assert(oldPage.equals(Buffer.from(compiled.renderPng(0, 1))));
 assert(Buffer.from(compiled.renderPng(check.pages - 1, 2)).length > 0);
+assert(compiled.renderRgba(0, 0.25).length > 0, 'raw frames also survive Engine disposal');
 const renderStats = JSON.parse(compiled.stats());
 compiled.free();
 const preview = new Engine();
@@ -70,4 +84,4 @@ const reimported = preview.compileProject(imported.entry, JSON.stringify(importe
 assert.equal(reimported.pageCount, check.pages, 'an imported project compiles from its files');
 reimported.free();
 substituted.free(); preview.free();
-console.log(JSON.stringify({ wasm: true, compiledHandle: true, explicitFontFallback: true, emptyZeroHeightText: true, bulletMeasurement: measure, statsBeforeEdit, renderStats, immutableDocumentAfterEngineFree: true, pages: check.pages, nativePngByteMatch: !!nativeDir, pngSha256: hashes, pdfBytes: pdf.length, pptxBytes: pptx.length }, null, 2));
+console.log(JSON.stringify({ wasm: true, nativeRgbaAndClickSteps: true, compiledHandle: true, explicitFontFallback: true, emptyZeroHeightText: true, bulletMeasurement: measure, statsBeforeEdit, renderStats, immutableDocumentAfterEngineFree: true, pages: check.pages, nativePngByteMatch: !!nativeDir, pngSha256: hashes, pdfBytes: pdf.length, pptxBytes: pptx.length }, null, 2));

@@ -348,3 +348,83 @@ fn empty_text_has_no_line_box_but_authored_blank_lines_remain() {
     );
     assert!(document.render_png(0, 1.0).is_err());
 }
+
+#[test]
+fn rgba_matches_png_including_straight_alpha_and_fractional_scale() {
+    let xml = r##"<Deck width="81px" height="43px" font-family="DejaVu Sans"><Slide id="p" background="#20406040"><Shape id="s" shape="ellipse" style="position:absolute;left:5.5px;top:3.5px;width:40px;height:30px;background:#4080C080"/></Slide></Deck>"##;
+    let doc = Compiler::new(resources()).unwrap().compile(xml).unwrap();
+    for scale in [1.0, 0.7, 1.3333334] {
+        let frame = doc.render_rgba(0, scale).unwrap();
+        let png = image::load_from_memory(&doc.render_png(0, scale).unwrap())
+            .unwrap()
+            .to_rgba8();
+        assert_eq!((frame.width, frame.height), png.dimensions());
+        assert_eq!(frame.pixels, png.into_raw());
+    }
+    assert!(doc.render_rgba(1, 1.0).is_err());
+    for scale in [0.0, -1.0, f32::NAN, f32::INFINITY, 4.01] {
+        assert!(doc.render_rgba(0, scale).is_err());
+    }
+    assert!(
+        doc.render_rgba(0, 1.0).unwrap().pixels[0] > 8,
+        "channels must be unpremultiplied"
+    );
+}
+
+#[test]
+fn native_steps_share_snapshots_but_do_not_collide_with_static_page_cache() {
+    let xml = r##"<Deck width="320px" height="180px" font-family="DejaVu Sans"><Slide id="p"><Shape id="a" style="position:absolute;left:20px;top:20px;width:60px;height:60px;background:#FF0000"/><Shape id="b" style="position:absolute;left:100px;top:20px;width:60px;height:60px;background:#0000FF"/><Animate target="b" effect="disappear" trigger="after-previous"/><Animate target="a" effect="appear"/><Animate target="b" effect="appear" trigger="with-previous"/><Animate target="a" effect="fill-color" color="#00FF00" trigger="after-previous"/><Animate target="a" effect="disappear"/></Slide></Deck>"##;
+    let mut compiler = Compiler::new(resources()).unwrap();
+    let doc = compiler.compile(xml).unwrap();
+    drop(compiler);
+    let snapshots = show::steps(&doc.scene().pages[0].show);
+    assert_eq!(doc.step_count(0).unwrap(), 3);
+    assert_eq!(doc.inspect()["pages"][0]["stepCount"], 3);
+    assert!(snapshots[0]["a"].hidden && snapshots[0]["b"].hidden);
+    assert_eq!(snapshots[1]["a"].fill, Some(Color(0, 255, 0, 255)));
+    assert_ne!(
+        doc.render_png(0, 1.0).unwrap(),
+        doc.render_png_step(0, 0, 1.0).unwrap()
+    );
+    for (index, snapshot) in snapshots.iter().enumerate() {
+        assert_eq!(
+            &show::step(&doc.scene().pages[0].show, index).unwrap(),
+            snapshot
+        );
+        let bytes = doc.render_png_step(0, index, 0.7).unwrap();
+        let rgba = doc.render_rgba_step(0, index, 0.7).unwrap();
+        assert_eq!(
+            rgba.pixels,
+            image::load_from_memory(&bytes)
+                .unwrap()
+                .to_rgba8()
+                .into_raw()
+        );
+    }
+    let hits = doc.render_stats().unwrap().png_cache_hits;
+    doc.render_png_step(0, 0, 1.0).unwrap();
+    assert_eq!(doc.render_stats().unwrap().png_cache_hits, hits + 1);
+    assert!(doc.render_png_step(0, 3, 1.0).is_err());
+    assert!(doc.render_rgba_step(0, usize::MAX, 1.0).is_err());
+    assert!(doc.step_count(1).is_err());
+    let invalid = Compiler::new(resources())
+        .unwrap()
+        .compile(&source("Too tall").replace("height:100px", "height:1px"))
+        .unwrap();
+    assert!(invalid.render_rgba_step(0, 0, 1.0).is_err());
+}
+
+#[test]
+fn group_and_child_show_states_compose_visibility_opacity_and_motion() {
+    let xml = r##"<Deck width="200px" height="200px" font-family="DejaVu Sans"><Slide id="p"><Group id="g" style="position:absolute;left:20px;top:20px;width:100px;height:100px"><Shape id="s" style="width:40px;height:40px;background:#FF0000"/></Group><Animate target="g" effect="motion-path" path="M 0 0 L 50 0"/><Animate target="s" effect="motion-path" path="M 0 0 L 0 50" trigger="with-previous"/><Animate target="g" effect="transparency" amount="0.5"/><Animate target="g" effect="disappear"/></Slide></Deck>"##;
+    let doc = Compiler::new(resources()).unwrap().compile(xml).unwrap();
+    let pixel = |step, x, y| {
+        let frame = doc.render_rgba_step(0, step, 1.0).unwrap();
+        let offset = ((y * frame.width + x) * 4) as usize;
+        frame.pixels[offset..offset + 4].to_vec()
+    };
+    assert_eq!(pixel(1, 75, 75), [255, 0, 0, 255]);
+    assert_eq!(pixel(1, 25, 75), [255, 255, 255, 255]);
+    assert_eq!(pixel(2, 75, 75), [255, 127, 127, 255]);
+    assert_eq!(pixel(3, 75, 75), [255, 255, 255, 255]);
+}

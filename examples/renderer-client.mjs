@@ -50,6 +50,8 @@ export class RendererClient {
   open(payload, transfer = []) { const revision = ++this.revision; return this.request('load', payload, transfer, revision); }
   compile(project, fontFallback) { const revision = ++this.revision; return this.request('compile', { project, fontFallback }, [], revision); }
   renderPage(page, scale = 1) { return this.request('page', { page, scale }); }
+  renderFrame(page, step, scale = 1) { return this.request('frame', { page, step, scale }); }
+  exportStepPng(page, step, scale = 1) { return this.request('step-png', { page, step, scale }); }
   exportPdf() { return this.request('pdf'); }
   exportPptx() { return this.request('pptx'); }
   measureText(text, style, width, wrap = true) { return this.request('measure', { text, style, width, wrap }); }

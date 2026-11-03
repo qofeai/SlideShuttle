@@ -1,6 +1,12 @@
 # 实现与验证状态
 
-日期：2026-11-02。仓库与产品名：**SlideShuttle**。当前版本：**0.3.0**，源语言仍为 v1。独立语言到原生预览、PDF、原生对象 PPTX 已运行；本次补齐可复用编译文档、文字测量、按页缓存和真实 Chromium Worker 预览。有限导入和保守三路比较保留。真实 PowerPoint/WPS、任意文件往返和生产化验收仍有明确缺口。
+日期：2026-11-03。仓库与产品名：**SlideShuttle**。包版本：**0.3.0**，源语言仍为 v1。原生 XML 可直接预览和按点击步骤放映，另可输出 PDF、原生对象 PPTX。真实 PowerPoint/WPS、任意文件往返、连续动画与正式客户端接入仍有明确缺口。
+
+## 2026-11-03 原生展示与性能审查
+
+新增 core/WASM RGBA 输出、点击步骤接口与浏览器按步放映；CLI 改为临时目录逐张生成，修复单页资源加载及组/子元素动画组合。100 页、300 张 PNG 的 CLI 峰值 RSS 从 162.14 MiB 降到 26.89 MiB，300 张 PNG 逐字节一致。release 文字页 RGBA 相比同版未缓存 PNG 约快 2.66 倍；这些是原生 CPU 测量，不是移动设备 WASM 帧率。
+
+Rust 1.92.0 / macOS ARM64 实际运行 workspace 测试、严格 Clippy、WASM 检查与构建、Node WASM、Chromium 156 Worker 放映回归。连续时间采样、真实手机、Safari/Firefox 和 100 页 WASM 内存尚未验证。完整范围、实测数据、测试入口与后续优先级见 [审查报告](AUDIT-2026-11-03.md)。以下保留既有能力表及 2026-11-02 历史验证记录；历史测试数量不代表当前 workspace 总数。
 
 ## 已实现
 
@@ -17,6 +23,7 @@
 | 决策 | 当前 diff 摘要绑定逐项理由，输入变化后失效，私有旁车与摘要回执 |
 | CLI | measure / check / render / export / import / inspect / diff，显式资源、写新文件 |
 | WASM | Engine / CompiledDeck、复用字体编译、真实文字测量、资源字节注入、PNG/PDF/PPTX 及有限导入 |
+| 原生放映 | stepCount、PNG/RGBA 点击步骤、Worker/Canvas 全屏与窄屏展示、当前步骤截图；暂不播放连续动画与页面过渡 |
 | 浏览器 | 内置中文常规/粗体、缺失字体替代提示、可补充原字体；module Worker 编译/渲染、翻页、源码重编译、资源加载、错误恢复、终止取消、导入损失展示 |
 | 示例 | 三页中文设计稿；三页列表/图片/表格/折线图样例；创作 Agent 操作说明 |
 

@@ -46,6 +46,37 @@ impl CompiledDeck {
     pub fn render_png(&self, page: usize, scale: f32) -> std::result::Result<Vec<u8>, JsValue> {
         self.document.render_png(page, scale).map_err(js)
     }
+    #[wasm_bindgen(js_name=stepCount)]
+    pub fn step_count(&self, page: usize) -> std::result::Result<usize, JsValue> {
+        self.document.step_count(page).map_err(js)
+    }
+    #[wasm_bindgen(js_name=renderPngStep)]
+    pub fn render_png_step(
+        &self,
+        page: usize,
+        step: usize,
+        scale: f32,
+    ) -> std::result::Result<Vec<u8>, JsValue> {
+        self.document.render_png_step(page, step, scale).map_err(js)
+    }
+    /// Straight-alpha RGBA8; dimensions are ceil(width * scale), ceil(height * scale).
+    #[wasm_bindgen(js_name=renderRgba)]
+    pub fn render_rgba(&self, page: usize, scale: f32) -> std::result::Result<Vec<u8>, JsValue> {
+        Ok(self.document.render_rgba(page, scale).map_err(js)?.pixels)
+    }
+    #[wasm_bindgen(js_name=renderRgbaStep)]
+    pub fn render_rgba_step(
+        &self,
+        page: usize,
+        step: usize,
+        scale: f32,
+    ) -> std::result::Result<Vec<u8>, JsValue> {
+        Ok(self
+            .document
+            .render_rgba_step(page, step, scale)
+            .map_err(js)?
+            .pixels)
+    }
     #[wasm_bindgen(js_name=renderPdf)]
     pub fn render_pdf(&self) -> std::result::Result<Vec<u8>, JsValue> {
         self.document.render_pdf().map_err(js)

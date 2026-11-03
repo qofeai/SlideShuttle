@@ -70,14 +70,24 @@ self.onmessage = async ({ data: message }) => {
     }
     if (!document) throw new Error('请先打开有效的演示文稿。');
     let bytes;
+    let dimensions;
     if (type === 'page') bytes = document.renderPng(payload.page, payload.scale ?? 1);
+    else if (type === 'step-png') bytes = document.renderPngStep(payload.page, payload.step, payload.scale ?? 1);
+    else if (type === 'frame') {
+      const scale = payload.scale ?? 1;
+      bytes = document.renderRgbaStep(payload.page, payload.step, scale);
+      // Match the renderer's f32 multiplication, including fractional scales.
+      dimensions = { width: Math.ceil(Math.fround(document.width * Math.fround(scale))), height: Math.ceil(Math.fround(document.height * Math.fround(scale))) };
+    }
     else if (type === 'pdf') bytes = document.renderPdf();
     else if (type === 'pptx') {
       if (imported) throw new Error('导入稿的 PPTX 重建请使用 CLI 检查差异与损失。');
       bytes = document.exportPptx();
     } else throw new Error(`未知操作：${type}`);
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    self.postMessage({ type: 'result', id, revision, value: { bytes: buffer, stats: JSON.parse(engine.stats()), renderStats: JSON.parse(document.stats()) } }, [buffer]);
+    // wasm-bindgen returns an owned, transferable Uint8Array. Avoid another full-frame copy.
+    const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    self.postMessage({ type: 'result', id, revision, value: { bytes: buffer, ...dimensions, stats: JSON.parse(engine.stats()), renderStats: JSON.parse(document.stats()) } }, [buffer]);
   } catch (error) {
     self.postMessage({ type: 'error', id, revision, error: String(error), diagnostics: error.diagnostics, resourcesLoaded });
   }

@@ -1,6 +1,6 @@
-# SlideShuttle 0.2.0 渲染使用与验证
+# SlideShuttle 原生渲染与放映
 
-日期：2026-11-02。源语言为独立的 SlideShuttle Language v1，不兼容 Kimi PPTD。0.2.0 的交付重点是可反复使用的渲染库与本地浏览器预览器。
+日期：2026-11-03。源语言为独立的 SlideShuttle Language v1，不兼容 Kimi PPTD。原生 XML 直接用于编译、预览和点击步骤放映；PPTX 是可选交付出口。性能数据与剩余客户端/连续动画缺口见 [架构审查](AUDIT-2026-11-03.md)。
 
 ## 编译与渲染的边界
 
@@ -10,11 +10,39 @@ XML + 显式字体/图片
   → Taffy 布局 + COSMIC Text 字体整形
   → CompiledDocument / CompiledDeck：场景、定位字形、资源快照
      ├─ 按页 PNG：tiny-skia
+     ├─ 静态 / 点击步骤 RGBA：tiny-skia → Canvas / 客户端纹理
      ├─ 全稿 PDF：krilla，嵌入子集字体
      └─ 原生对象 PPTX：文本、形状、图片、表格、图表等
 ```
 
 PNG/PDF 使用相同的已定位字形，不借用 HTML 截图或 Office 服务。PPTX 交由收件端重新排版，文字折行、图表坐标轴/图例可能不同，不能承诺与原生预览像素一致。
+
+## 直接展示原生文稿
+
+本地预览器的“按步放映”使用 Worker 中的 WASM 输出 RGBA，由 Canvas 展示，不经过 PPTX 或 PNG。支持点击/触屏、方向键、空格、前后翻步与跨页、全屏及固定容器回退；Esc 或退出按钮返回预览。`examples/show.xml` 展示两个点击组与自动入场，当前步骤可保存为 PNG。
+
+宿主可以直接使用已编译文档：
+
+```javascript
+const count = deck.stepCount(page); // 至少 1；包含第一次点击前的步骤 0
+const step = 0;
+const scale = Math.fround(0.75);
+const pixels = deck.renderRgbaStep(page, step, scale);
+// 与 Rust f32 乘法一致，避免边界尺寸因 JS 双精度计算而差一像素。
+const width = Math.ceil(Math.fround(deck.width * scale));
+const height = Math.ceil(Math.fround(deck.height * scale));
+canvas.width = width; canvas.height = height;
+canvas.getContext('2d').putImageData(new ImageData(
+  new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength), width, height
+), 0, 0);
+const png = deck.renderPngStep(page, step, 1); // Agent / 用户保存这个步骤
+```
+
+页码和步骤均从 0 开始，越界报错。`renderRgba(page, scale)` 对应普通静态预览。像素为从上到下、无行间 padding 的 sRGB RGBA8，alpha 未预乘，与 Canvas ImageData 一致。RGBA 不进入 PNG 缓存；单次帧内存为 `width * height * 4`，WASM 到 JS 仍存在拷贝，不是零拷贝 GPU API。静态页反复查看可继续用有缓存的 `renderPng`。
+
+core 对应 `CompiledDocument::step_count`、`render_png_step`、`render_rgba`、`render_rgba_step`，RGBA 返回 `RgbaFrame { width, height, pixels }`。`inspect()` 各页包含 `stepCount` 与 `show` 元数据，宿主可取备注和过渡声明。
+
+步骤 0 已结算自动效果，此后每一步结算一个点击组及其 with/after-previous 效果。duration、delay、easing、repeat 的连续过程和页面过渡目前不采样；这是一套原生点击终态展示能力。手机/桌面客户端尚未正式接入，浏览器窄屏测试不代表实机验收。
 
 ## 先运行本地预览器
 

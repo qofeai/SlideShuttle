@@ -509,6 +509,62 @@ pub fn render_png_step(
     scale: f32,
     looks: &BTreeMap<String, crate::show::Look>,
 ) -> Result<Vec<u8>> {
+    render_surface(scene, page, resources, scale, looks)?
+        .encode_png()
+        .map_err(|e| invalid(e.to_string()))
+}
+
+/// Tightly packed, top-to-bottom, straight-alpha sRGB RGBA8 pixels, ready for Canvas
+/// ImageData or a client texture. No PNG encode/decode and no retained frame cache.
+pub struct RgbaFrame {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+pub fn render_rgba(
+    scene: &Scene,
+    page: usize,
+    resources: &Resources,
+    scale: f32,
+) -> Result<RgbaFrame> {
+    render_rgba_step(scene, page, resources, scale, &BTreeMap::new())
+}
+
+pub fn render_rgba_step(
+    scene: &Scene,
+    page: usize,
+    resources: &Resources,
+    scale: f32,
+    looks: &BTreeMap<String, crate::show::Look>,
+) -> Result<RgbaFrame> {
+    let surface = render_surface(scene, page, resources, scale, looks)?;
+    let (width, height) = (surface.width(), surface.height());
+    let mut pixels = surface.take();
+    // tiny-skia stores premultiplied channels. ImageData requires straight alpha.
+    for pixel in pixels.chunks_exact_mut(4) {
+        if pixel[3] != 255 {
+            let c =
+                tiny_skia::PremultipliedColorU8::from_rgba(pixel[0], pixel[1], pixel[2], pixel[3])
+                    .expect("tiny-skia pixels are premultiplied")
+                    .demultiply();
+            pixel.copy_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
+        }
+    }
+    Ok(RgbaFrame {
+        width,
+        height,
+        pixels,
+    })
+}
+
+fn render_surface(
+    scene: &Scene,
+    page: usize,
+    resources: &Resources,
+    scale: f32,
+    looks: &BTreeMap<String, crate::show::Look>,
+) -> Result<tiny_skia::Pixmap> {
     ensure(scene)?;
     if !scale.is_finite() || scale <= 0.0 || scale > 4.0 {
         return Err(invalid("render scale must be in (0,4]"));
@@ -528,53 +584,62 @@ pub fn render_png_step(
         tiny_skia::Pixmap::new(w, h).ok_or_else(|| invalid("cannot allocate render surface"))?;
     let mut faces = Faces::new();
     for item in std::iter::once(&page.background).chain(&page.items) {
-        // A Group's look applies to its members; scaling is about the animated object's center.
+        // Apply both group and local state. A child's animation must not override a
+        // hidden group, its opacity, or its transform.
         let own = item.id.strip_suffix("::background").unwrap_or(&item.id);
-        let owner = looks
-            .get_key_value(own)
-            .or_else(|| item.group.as_ref().and_then(|g| looks.get_key_value(g)));
-        let Some((owner, look)) = owner else {
+        let states = [
+            item.group.as_ref().and_then(|g| looks.get_key_value(g)),
+            looks.get_key_value(own),
+        ];
+        if states.iter().all(Option::is_none) {
             paint_png(item, &mut pixmap, resources, &mut faces, scale)?;
             continue;
-        };
-        if look.hidden {
+        }
+        if states.iter().flatten().any(|(_, look)| look.hidden) {
             continue;
         }
         let mut item = item.clone();
-        item.opacity *= look.opacity;
-        if let Some(c) = look.fill
-            && !matches!(
-                item.kind,
-                Draw::Image { .. } | Draw::Table { .. } | Draw::Chart { .. } | Draw::Group
-            )
-        {
-            item.fill = c;
-            item.gradient = None;
+        let mut transform = tiny_skia::Transform::identity();
+        for (owner, look) in states.into_iter().flatten() {
+            item.opacity *= look.opacity;
+            if let Some(c) = look.fill
+                && !matches!(
+                    item.kind,
+                    Draw::Image { .. } | Draw::Table { .. } | Draw::Chart { .. } | Draw::Group
+                )
+            {
+                item.fill = c;
+                item.gradient = None;
+            }
+            if look.scale == 1.0 && look.offset == (0.0, 0.0) {
+                continue;
+            }
+            // The object's full box: a Text's painted box when it has one.
+            let painted = format!("{owner}::background");
+            let r = page
+                .items
+                .iter()
+                .find(|i| i.id == painted)
+                .or_else(|| page.items.iter().find(|i| i.id == *owner))
+                .map_or(item.rect, |i| i.rect);
+            let (cx, cy) = (
+                (r.x + r.width / 2.0) * scale,
+                (r.y + r.height / 2.0) * scale,
+            );
+            let local =
+                tiny_skia::Transform::from_translate(look.offset.0 * scale, look.offset.1 * scale)
+                    .pre_translate(cx, cy)
+                    .pre_scale(look.scale, look.scale)
+                    .pre_translate(-cx, -cy);
+            transform = transform.pre_concat(local);
         }
-        if look.scale == 1.0 && look.offset == (0.0, 0.0) {
+        if transform.is_identity() {
             paint_png(&item, &mut pixmap, resources, &mut faces, scale)?;
             continue;
         }
-        // The animated object's full box: a Text's painted box when it has one.
-        let painted = format!("{owner}::background");
-        let r = page
-            .items
-            .iter()
-            .find(|i| i.id == painted)
-            .or_else(|| page.items.iter().find(|i| i.id == *owner))
-            .map_or(item.rect, |i| i.rect);
-        let (cx, cy) = (
-            (r.x + r.width / 2.0) * scale,
-            (r.y + r.height / 2.0) * scale,
-        );
         let mut layer = tiny_skia::Pixmap::new(w, h)
             .ok_or_else(|| invalid("cannot allocate render surface"))?;
         paint_png(&item, &mut layer, resources, &mut faces, scale)?;
-        let transform =
-            tiny_skia::Transform::from_translate(look.offset.0 * scale, look.offset.1 * scale)
-                .pre_translate(cx, cy)
-                .pre_scale(look.scale, look.scale)
-                .pre_translate(-cx, -cy);
         pixmap.draw_pixmap(
             0,
             0,
@@ -587,7 +652,7 @@ pub fn render_png_step(
             None,
         );
     }
-    pixmap.encode_png().map_err(|e| invalid(e.to_string()))
+    Ok(pixmap)
 }
 
 struct Outline<'a> {

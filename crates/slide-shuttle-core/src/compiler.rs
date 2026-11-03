@@ -27,11 +27,12 @@ pub struct CompiledDocument {
 
 #[derive(Default)]
 struct PngCache {
-    entries: VecDeque<((usize, u32), Vec<u8>)>,
+    entries: VecDeque<(PngKey, Vec<u8>)>,
     bytes: usize,
     renders: u64,
     hits: u64,
 }
+type PngKey = (usize, Option<usize>, u32);
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderStats {
@@ -193,8 +194,36 @@ impl CompiledDocument {
         &self.profile
     }
     pub fn render_png(&self, page: usize, scale: f32) -> Result<Vec<u8>> {
+        self.cached_png(page, None, scale)
+    }
+    pub fn step_count(&self, page: usize) -> Result<usize> {
+        Ok(show::step_count(&self.page(page)?.show))
+    }
+    /// Settled click state; step 0 includes automatic effects before the first click.
+    pub fn render_png_step(&self, page: usize, step: usize, scale: f32) -> Result<Vec<u8>> {
+        self.cached_png(page, Some(step), scale)
+    }
+    pub fn render_rgba(&self, page: usize, scale: f32) -> Result<render::RgbaFrame> {
+        render::render_rgba(&self.scene, page, &self.resources, scale)
+    }
+    pub fn render_rgba_step(
+        &self,
+        page: usize,
+        step: usize,
+        scale: f32,
+    ) -> Result<render::RgbaFrame> {
+        let looks = show::step(&self.page(page)?.show, step)?;
+        render::render_rgba_step(&self.scene, page, &self.resources, scale, &looks)
+    }
+    fn page(&self, page: usize) -> Result<&ScenePage> {
+        self.scene
+            .pages
+            .get(page)
+            .ok_or_else(|| model::invalid("page index out of range"))
+    }
+    fn cached_png(&self, page: usize, step: Option<usize>, scale: f32) -> Result<Vec<u8>> {
         const BUDGET: usize = 32 * 1024 * 1024;
-        let key = (page, scale.to_bits());
+        let key = (page, step, scale.to_bits());
         {
             let mut cache = self
                 .png_cache
@@ -208,7 +237,12 @@ impl CompiledDocument {
                 return Ok(result);
             }
         }
-        let bytes = render::render_png(&self.scene, page, &self.resources, scale)?;
+        let bytes = if let Some(step) = step {
+            let looks = show::step(&self.page(page)?.show, step)?;
+            render::render_png_step(&self.scene, page, &self.resources, scale, &looks)?
+        } else {
+            render::render_png(&self.scene, page, &self.resources, scale)?
+        };
         let mut cache = self
             .png_cache
             .lock()
@@ -250,7 +284,7 @@ impl CompiledDocument {
     }
     pub fn inspect(&self) -> serde_json::Value {
         json!({"valid":!self.scene.has_errors(),"width":self.scene.width,"height":self.scene.height,"pageCount":self.page_count(),"resourceProfile":self.profile,"diagnostics":self.scene.diagnostics,
-            "pages":self.scene.pages.iter().map(|p|json!({"id":p.id,"nodes":p.items.iter().map(|i|{
+            "pages":self.scene.pages.iter().map(|p|json!({"id":p.id,"stepCount":show::step_count(&p.show),"show":p.show,"nodes":p.items.iter().map(|i|{
                 let text=match &i.kind{Draw::Text{line_count,glyphs,export_wrap,..}=>Some(json!({"lineCount":line_count,"glyphCount":glyphs.len(),"exportWrap":export_wrap})),_=>None};
                 json!({"id":i.id,"rect":i.rect,"source":i.source,"text":text})
             }).collect::<Vec<_>>()})).collect::<Vec<_>>()})

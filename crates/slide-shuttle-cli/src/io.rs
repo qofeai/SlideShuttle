@@ -28,7 +28,11 @@ fn text(path: &Path) -> Result<String> {
 }
 /// Read the project (entry, libraries, pages) and exactly the fonts and images it declares.
 /// Every referenced path resolves inside the entry file's directory.
-pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resources)> {
+pub fn load(
+    input: &Path,
+    fonts: &[std::path::PathBuf],
+    page: Option<&str>,
+) -> Result<(Deck, Resources, usize)> {
     let root = input
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -38,9 +42,20 @@ pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resourc
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let deck = slide_shuttle_core::parse_project(&entry, &text(input)?, |path| {
+    let mut deck = slide_shuttle_core::parse_project(&entry, &text(input)?, |path| {
         text(&local(&root, path)?)
     })?;
+    // Select before loading media: inspecting one page must not decode/read unrelated
+    // images or fail because another page's asset is still being authored.
+    let mut first = 0;
+    if let Some(page) = page {
+        first = deck
+            .slides
+            .iter()
+            .position(|s| s.id == page)
+            .ok_or_else(|| fail(format!("no slide with id {page}")))?;
+        deck.slides = vec![deck.slides.swap_remove(first)];
+    }
     let mut resources = Resources::default();
     for font in &deck.fonts {
         resources.fonts.push(FontResource {
@@ -91,7 +106,7 @@ pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resourc
     if total > 256 * 1024 * 1024 {
         return Err(fail("resource budget exceeds 256 MiB"));
     }
-    Ok((deck, resources))
+    Ok((deck, resources, first))
 }
 fn local(root: &Path, src: &str) -> Result<std::path::PathBuf> {
     let p = Path::new(src);
@@ -134,4 +149,75 @@ pub fn write_new(path: &Path, data: &[u8]) -> Result<()> {
     })();
     let _ = fs::remove_file(&tmp);
     result.map_err(Error::Io)
+}
+
+/// Render to a private sibling directory one file at a time, then publish into a newly
+/// reserved directory. Render failures leave no output and don't retain the whole deck
+/// in memory. Exclusive directory creation preserves concurrently created destinations.
+pub fn write_directory(path: &Path, render: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+    if path.exists() {
+        return Err(fail(
+            "render output directory already exists; choose a new path",
+        ));
+    }
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".slide-shuttle-render-")
+        .tempdir_in(parent)?;
+    render(stage.path())?;
+    fs::create_dir(path)?;
+    let mut published = Vec::new();
+    let result = (|| {
+        let mut entries = fs::read_dir(stage.path())?.collect::<std::io::Result<Vec<_>>>()?;
+        // The manifest is the completion marker for readers of a newly published deck.
+        entries.sort_by_key(|entry| entry.file_name() == "manifest.json");
+        for entry in entries {
+            let target = path.join(entry.file_name());
+            fs::hard_link(entry.path(), &target)?;
+            published.push(target);
+        }
+        Ok::<_, std::io::Error>(())
+    })();
+    if result.is_err() {
+        for file in published {
+            let _ = fs::remove_file(file);
+        }
+        let _ = fs::remove_dir(path);
+    }
+    result.map_err(Error::Io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staged_render_failure_cleans_up_and_publication_preserves_racing_writer() {
+        let root = tempfile::tempdir().unwrap();
+        let out = root.path().join("preview");
+        let error = write_directory(&out, |stage| {
+            write_new(&stage.join("slide-001.png"), b"first page")?;
+            Err(fail("later page failed"))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("later page failed"));
+        assert!(!out.exists());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        assert!(
+            write_directory(&out, |stage| {
+                write_new(&stage.join("slide-001.png"), b"our page")?;
+                fs::create_dir(&out)?;
+                fs::write(out.join("external.txt"), b"other writer")?;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read(out.join("external.txt")).unwrap(), b"other writer");
+        assert!(!out.join("slide-001.png").exists());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
 }

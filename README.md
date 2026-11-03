@@ -1,6 +1,6 @@
 # SlideShuttle
 
-独立的 Rust 演示文稿编译器。Agent 用接近 HTML/CSS 的静态声明描述页面，原生布局与文字整形引擎生成 PNG、PDF，以及包含原生对象的 PPTX。
+独立的 Rust 原生演示文稿引擎。Agent 用接近 HTML/CSS 的静态声明描述页面，用户可通过 WASM 直接查看原生文稿、按点击步骤放映；同一布局与文字整形引擎生成 PNG、PDF，以及包含原生对象的 PPTX。预览和放映无需先转换为 PPTX。
 
 当前版本 **0.3.0**，提供原生渲染库、CLI 和运行于 Web Worker 的 WASM 预览器。格式由本项目定义，不读取 Kimi 的 PPTD；核心渲染不依赖浏览器或 Office 服务。**不承诺任意 PPTX 无损往返，也尚未通过真实 PowerPoint / WPS 验收。**
 
@@ -57,6 +57,8 @@ target/debug/slide-shuttle export examples/demo.xml --out examples/output/demo.p
 一份稿可以拆成入口 `deck.xml`、共享库 `<Library src>` 和每页一个文件的 `<Slide src>`，页内元素 ID 只需在本页唯一，`check` / `render --page <id>` 可只处理一页，见 [项目结构](docs/LANGUAGE.md#项目结构)。
 
 支持 `Box`、`Group`、`Text` / `Span` / `br`、`Image`、`Shape`、`Path`、`Table`、`Chart`，以及 `Token`、`Style`、`Component` / `Use`；放映用的页面切换、`Animate` 动画和 `Notes` 备注写成原生 PPTX。这是一门静态语言，不能执行 JavaScript。完整语法与限制见 [语言说明](docs/LANGUAGE.md)。
+
+`render --steps` 额外输出首次点击前、每次点击后的 PNG，manifest 列出页面 ID 与步骤数量。WASM 的 `stepCount`、`renderPngStep` 和 `renderRgbaStep` 暴露同样状态。**目前展示点击终态，连续动画的毫秒采样和页面转场尚未实现。** 原生渲染、客户端接入缺口与性能实测见 [架构审查](docs/AUDIT-2026-11-03.md)。
 
 ## 导入与继续改稿
 
@@ -118,9 +120,9 @@ engine.free();
 
 多文件项目用 `engine.compileProject('deck.xml', JSON.stringify({ 'deck.xml': …, 'pages/01-cover.xml': … }))`；`importPptx` 返回 `{ entry, files, snapshot }`，可直接交给 `compileProject`。预览器可选择整个项目文件夹，并在源码面板逐个编辑文件。
 
-`CompiledDeck` 持有不可变的资源和布局快照。翻页不重新排版；最多缓存 8 个“页码 + 缩放”PNG，总编码字节不超过 32 MiB。同一 Engine 修改源文件时复用字体系统；修改字体/图片后重建编译器，旧文档仍然有效，需主动 `.free()`。原有 source-based 方法保留，复用最近一次相同源码的编译结果。缓存上限不是 WASM 总内存上限。
+`CompiledDeck` 持有不可变的资源和布局快照。翻页不重新排版；最多缓存 8 个“页码 + 步骤（或静态页）+ 缩放”PNG，总编码字节不超过 32 MiB。`renderRgba` / `renderRgbaStep` 直接提供 straight-alpha RGBA8，适合 Canvas/客户端纹理，省去 PNG 编解码且不缓存原始帧；像素格式和尺寸计算见 [渲染说明](docs/RENDERING.md#直接展示原生文稿)。同一 Engine 修改源文件时复用字体系统；修改字体/图片后重建编译器，旧文档仍然有效，需主动 `.free()`。原有 source-based 方法保留，复用最近一次相同源码的编译结果。缓存上限不是 WASM 总内存上限。
 
-本地 [WASM 预览器](examples/wasm-preview.html) 支持 XML / 有限 PPTX 导入、翻页、源文件修改、诊断与损失查看、PNG/PDF 下载和自创稿 PPTX 导出。构建 web bindings 并下载内置字体后启动：
+本地 [WASM 预览器](examples/wasm-preview.html) 支持 XML / 有限 PPTX 导入、翻页、键盘/触屏按步放映、当前步骤截图、源文件修改、诊断与损失查看、PNG/PDF 下载和自创稿 PPTX 导出。`examples/show.xml` 可验证原生放映。构建 web bindings 并下载内置字体后启动：
 
 ```bash
 python3 tools/fetch_fonts.py

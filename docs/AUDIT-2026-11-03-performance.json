@@ -1,0 +1,172 @@
+{
+  "nativeSamples": {
+    "baseline": [
+      {
+        "cachedPngMs": 0.0009304199999999999,
+        "compileMs": 3.119541,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 19.301153749999997,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.00104791,
+        "compileMs": 2.303208,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 11.02517333,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.00085875,
+        "compileMs": 2.356833,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 10.10624792,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.00107167,
+        "compileMs": 2.22875,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 9.6382525,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.0012374999999999999,
+        "compileMs": 2.218417,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 9.50277,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "width": 1280
+      }
+    ],
+    "optimized": [
+      {
+        "cachedPngMs": 0.00427417,
+        "compileMs": 2.631333,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 23.050161669999998,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "rgbaBytes": 3686400,
+        "rgbaMs": 5.333255,
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.0009541700000000001,
+        "compileMs": 2.390834,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 11.33993708,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "rgbaBytes": 3686400,
+        "rgbaMs": 4.46724833,
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.00077667,
+        "compileMs": 2.2175,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 9.567565,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "rgbaBytes": 3686400,
+        "rgbaMs": 3.56892,
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.00103666,
+        "compileMs": 2.2138750000000003,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 9.62566167,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "rgbaBytes": 3686400,
+        "rgbaMs": 3.5923429199999997,
+        "width": 1280
+      },
+      {
+        "cachedPngMs": 0.0013704099999999999,
+        "compileMs": 2.2461249999999997,
+        "height": 720,
+        "iterations": 100,
+        "pngBytes": 80157,
+        "pngMs": 9.55084042,
+        "pngSha256": "41bf3dbc7760d01dad1dd8e89d1cb850c429c98fdce5cd8438549fbacfcd7f24",
+        "rgbaBytes": 3686400,
+        "rgbaMs": 3.62183583,
+        "width": 1280
+      }
+    ]
+  },
+  "medians": {
+    "baseline": {
+      "compileMs": 2.303208,
+      "pngMs": 10.10624792,
+      "cachedPngMs": 0.00104791
+    },
+    "optimized": {
+      "compileMs": 2.2461249999999997,
+      "pngMs": 9.62566167,
+      "cachedPngMs": 0.00103666,
+      "rgbaMs": 3.62183583
+    }
+  },
+  "cli100": {
+    "baseline": {
+      "pages": 100,
+      "steps": true,
+      "pngCount": 300,
+      "seconds": 105.38820045796456,
+      "peakRssBytes": 170016768,
+      "encodedBytes": 131669500,
+      "firstPngSha256": "ef75a3c798bc912962f5cd3641398c14623249223d1e8111365c4ddc86f8bf7a",
+      "cli": "target/audit/baseline-cli",
+      "platform": "darwin",
+      "python": "3.14.7"
+    },
+    "optimized": {
+      "pages": 100,
+      "steps": true,
+      "pngCount": 300,
+      "seconds": 108.04143091698643,
+      "peakRssBytes": 28196864,
+      "encodedBytes": 131669500,
+      "firstPngSha256": "ef75a3c798bc912962f5cd3641398c14623249223d1e8111365c4ddc86f8bf7a",
+      "cli": "target/debug/slide-shuttle",
+      "platform": "darwin",
+      "python": "3.14.7"
+    }
+  },
+  "rgbaSpeedupVsSameBuildPng": 2.65767475992969,
+  "cliPeakRssReduction": 0.8341524525392695,
+  "all300PngMatch": true,
+  "environment": {
+    "date": "2026-11-03",
+    "sourceBaseline": "4967438",
+    "os": "macOS ARM64",
+    "cpu": "Apple M4",
+    "memoryBytes": 17179869184,
+    "rust": "1.92.0",
+    "nativeProfile": "release",
+    "cliProfile": "debug",
+    "nativeRounds": 5,
+    "nativeIterationsPerRound": 100
+  }
+}

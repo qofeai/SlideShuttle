@@ -35,7 +35,7 @@ async function main() {
   });
   const origin = `http://127.0.0.1:${port}`;
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 1050 } });
+  const context = await browser.newContext({ acceptDownloads: true, hasTouch: true, viewport: { width: 1440, height: 1050 } });
   const page = await context.newPage();
   const errors = [], externalRequests = [], fontRequests = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -167,8 +167,45 @@ async function main() {
     assert.equal(await page.locator('#page-label').textContent(), '1 / 3', 'editing one page file recompiles the whole project');
     await page.locator('#source-panel').evaluate(element => element.open = false);
 
+    await page.locator('#source').setInputFiles(path.join(root, 'examples/show.xml'));
+    await page.click('#run'); await ready();
+    await page.evaluate(() => { window.__frames = []; window.addEventListener('slideshuttle:frame', e => window.__frames.push(e.detail)); });
+    const frameReady = () => page.waitForFunction(() => document.body.dataset.busy === 'false' && window.__frames.length > 0);
+    const compilationsBeforeShow = (await latestStats()).compilations;
+    await page.click('#present'); await frameReady();
+    assert.equal(await page.locator('#step-label').textContent(), '1 / 2 · 步骤 0 / 2');
+    const pixel = () => page.locator('#frame').evaluate(canvas => [...canvas.getContext('2d').getImageData(Math.round(canvas.width * 100 / 640), Math.round(canvas.height * 200 / 360), 1, 1).data]);
+    assert.deepEqual(await pixel(), [255,255,255,255]);
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => window.__frames.at(-1)?.step === 1 && document.body.dataset.busy === 'false');
+    assert.deepEqual(await pixel(), [239,68,68,255]);
+    const stepPng = await download('show-png');
+    assert(stepPng.equals(fs.readFileSync(path.join(root, 'examples/output/show-native/slide-001-step-1.png'))));
+    await page.screenshot({ path: path.join(output, 'native-show.png') });
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => window.__frames.at(-1)?.step === 2 && document.body.dataset.busy === 'false');
+    assert.deepEqual(await pixel(), [255,255,255,255]);
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => window.__frames.at(-1)?.page === 1 && document.body.dataset.busy === 'false');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForFunction(() => window.__frames.at(-1)?.page === 0 && document.body.dataset.busy === 'false');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.body.dataset.presenting === 'false');
+    assert(await page.locator('#slide').isVisible());
+    assert.equal((await latestStats()).compilations, compilationsBeforeShow, 'native show steps must not recompile');
+    // Narrow viewport with touch events, without relying on an OS fullscreen API.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.click('#present'); await frameReady();
+    const beforeTap = await page.evaluate(() => window.__frames.length);
+    await page.tap('#frame');
+    await page.waitForFunction(n => window.__frames.length > n && window.__frames.at(-1)?.step === 1 && document.body.dataset.busy === 'false', beforeTap);
+    assert((await page.locator('#frame').boundingBox()).width <= 390);
+    await page.screenshot({ path: path.join(output, 'native-show-mobile.png') });
+    await page.click('#show-exit');
+    await page.setViewportSize({ width: 1440, height: 1050 });
+
     assert.equal(fontRequests.length, 2, 'opening another document or replacing the Worker must reuse the built-in font bytes');
-    const report = { engineVersion: execFileSync(path.join(root, 'target/debug/slide-shuttle'), ['--version'], { encoding: 'utf8' }).trim(), browser: browser.version(), worker: true, builtinFontsAutomatic: true, builtinFontDownloads: fontRequests.length, sourceFileOnlyPreview: true, fontSubstitutionsVisible: true, strictFontMode: true, customFontsSupported: true, nativePngByteMatch: true, imageAssetNativeByteMatch: true, pageCacheHits: 1, pageNavigationCompileCount: 1, fontBuildsAfterSourceEditAndRecovery: 1, invalidSourceClearsPreview: true, warningsRemainVisible: true, importedPptxPreview: true, emptyTextPptxPreview: true, themeStylePptxPreview: true, themeOracleByteMatchPages: 3, themeImportLosses: 0, importLossesVisible: true, importedPptxReexportGuarded: true, cancelAndReload: true, firstLoadMs, responsiveTicks, pdfBytes: pdf.length, pptxBytes: pptx.length, pageErrors: errors, externalRequests };
+    const report = { engineVersion: execFileSync(path.join(root, 'target/debug/slide-shuttle'), ['--version'], { encoding: 'utf8' }).trim(), browser: browser.version(), worker: true, nativeClickShow: true, nativeRgbaPixels: true, nativeStepPngByteMatch: true, showKeyboardAndTouch: true, builtinFontsAutomatic: true, builtinFontDownloads: fontRequests.length, sourceFileOnlyPreview: true, fontSubstitutionsVisible: true, strictFontMode: true, customFontsSupported: true, nativePngByteMatch: true, imageAssetNativeByteMatch: true, pageCacheHits: 1, pageNavigationCompileCount: 1, fontBuildsAfterSourceEditAndRecovery: 1, invalidSourceClearsPreview: true, warningsRemainVisible: true, importedPptxPreview: true, emptyTextPptxPreview: true, themeStylePptxPreview: true, themeOracleByteMatchPages: 3, themeImportLosses: 0, importLossesVisible: true, importedPptxReexportGuarded: true, cancelAndReload: true, firstLoadMs, responsiveTicks, pdfBytes: pdf.length, pptxBytes: pptx.length, pageErrors: errors, externalRequests };
     assert.deepEqual(errors, []); assert.deepEqual(externalRequests, []);
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));

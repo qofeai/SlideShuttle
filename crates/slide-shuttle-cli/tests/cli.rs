@@ -356,3 +356,73 @@ fn cli_loads_multi_file_projects_and_checks_one_page() {
             .contains("references must be relative paths inside the project")
     );
 }
+
+#[test]
+fn cli_step_manifest_names_the_native_states_and_failed_render_leaves_no_output() {
+    let root = setup();
+    let p = root.path();
+    let source = fs::read_to_string(p.join("source.xml")).unwrap().replace(
+        "</Slide>",
+        r#"<Animate target="t" effect="appear"/></Slide>"#,
+    );
+    fs::write(p.join("source.xml"), source).unwrap();
+    success(run(
+        p,
+        &["render", "source.xml", "--out", "steps", "--steps"],
+        true,
+    ));
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(p.join("steps/manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["slides"][0]["stepCount"], 2);
+    assert_eq!(manifest["slides"][0]["stepsExported"], true);
+    let png = |name| fs::read(p.join(format!("steps/{name}"))).unwrap();
+    assert_ne!(png("slide-001.png"), png("slide-001-step-0.png"));
+    assert_eq!(png("slide-001.png"), png("slide-001-step-1.png"));
+    assert!(
+        !run(
+            p,
+            &["render", "source.xml", "--out", "failed", "--scale", "5"],
+            true
+        )
+        .status
+        .success()
+    );
+    assert!(!p.join("failed").exists());
+    assert!(!fs::read_dir(p).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".slide-shuttle-render-")
+    }));
+}
+
+#[test]
+fn selecting_a_page_loads_only_its_media_and_keeps_original_page_number() {
+    let root = setup();
+    let p = root.path();
+    fs::write(p.join("source.xml"), r#"<Deck font-family="DejaVu Sans"><Slide id="unfinished"><Image id="missing" src="not-authored-yet.png"/></Slide><Slide id="ready"><Text id="title" style="width:500px;height:100px">Work on one page</Text></Slide></Deck>"#).unwrap();
+    assert!(!run(p, &["check", "source.xml"], true).status.success());
+    assert_eq!(
+        success(run(p, &["check", "source.xml", "--page", "ready"], true))["valid"],
+        true
+    );
+    success(run(
+        p,
+        &[
+            "render",
+            "source.xml",
+            "--page",
+            "ready",
+            "--out",
+            "one-page",
+        ],
+        true,
+    ));
+    assert!(p.join("one-page/slide-002.png").exists());
+    assert!(!p.join("one-page/slide-001.png").exists());
+    assert!(
+        !run(p, &["check", "source.xml", "--page", "unknown"], true)
+            .status
+            .success()
+    );
+}

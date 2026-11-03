@@ -123,16 +123,7 @@ fn print(v: &impl serde::Serialize) -> Result<()> {
 /// Compile the project, or only one slide when `page` names a slide id. Also returns the
 /// deck position of the first compiled slide, so output names match the full deck.
 fn compile(input: &Input, page: Option<&str>) -> Result<(CompiledDocument, usize)> {
-    let (mut deck, resources) = io::load(&input.input, &input.font)?;
-    let mut first = 0;
-    if let Some(page) = page {
-        first = deck
-            .slides
-            .iter()
-            .position(|s| s.id == page)
-            .ok_or_else(|| fail(format!("no slide with id {page}")))?;
-        deck.slides = vec![deck.slides.swap_remove(first)];
-    }
+    let (deck, resources, first) = io::load(&input.input, &input.font, page)?;
     Ok((Compiler::new(resources)?.compile_deck(deck)?, first))
 }
 fn review(
@@ -214,45 +205,36 @@ fn run(cli: Cli) -> Result<()> {
         } => {
             let (doc, first) = compile(&input, page.as_deref())?;
             let (s, r) = (doc.scene(), doc.resources());
-            if out.exists() {
-                return Err(fail(
-                    "render output directory already exists; choose a new path",
-                ));
-            }
-            // Compute all output before publishing; a layout error cannot leave a partial deck.
-            let png = (0..s.pages.len())
-                .map(|i| render::render_png(s, i, r, scale))
-                .collect::<Result<Vec<_>>>()?;
-            let mut frames = Vec::new();
-            if steps {
+            io::write_directory(&out, |stage| {
+                // Keep only one encoded page/state at a time; staging preserves validation
+                // before publication without accumulating a long presentation in RAM.
                 for (i, p) in s.pages.iter().enumerate() {
-                    if p.show.animations.is_empty() {
-                        continue;
-                    }
-                    for (k, looks) in show::steps(&p.show).iter().enumerate() {
-                        frames.push((
-                            format!("slide-{:03}-step-{k}.png", first + i + 1),
-                            render::render_png_step(s, i, r, scale, looks)?,
-                        ));
+                    io::write_new(
+                        &stage.join(format!("slide-{:03}.png", first + i + 1)),
+                        &render::render_png(s, i, r, scale)?,
+                    )?;
+                    if steps && !p.show.animations.is_empty() {
+                        for k in 0..show::step_count(&p.show) {
+                            let looks = show::step(&p.show, k)?;
+                            io::write_new(
+                                &stage.join(format!("slide-{:03}-step-{k}.png", first + i + 1)),
+                                &render::render_png_step(s, i, r, scale, &looks)?,
+                            )?;
+                        }
                     }
                 }
-            }
-            let pdf = pdf.then(|| doc.render_pdf()).transpose()?;
-            for (i, b) in png.iter().enumerate() {
-                io::write_new(&out.join(format!("slide-{:03}.png", first + i + 1)), b)?;
-            }
-            for (name, b) in &frames {
-                io::write_new(&out.join(name), b)?;
-            }
-            if let Some(pdf) = pdf {
-                io::write_new(&out.join("deck.pdf"), &pdf)?;
-            }
-            io::write_new(
-                &out.join("manifest.json"),
-                &serde_json::to_vec_pretty(
-                    &json!({"engine":baseline::ENGINE,"resourceProfile":doc.resource_profile(),"pages":s.pages.len(),"width":s.width,"height":s.height,"diagnostics":s.diagnostics}),
-                )?,
-            )?;
+                if pdf {
+                    io::write_new(&stage.join("deck.pdf"), &doc.render_pdf()?)?;
+                }
+                io::write_new(
+                    &stage.join("manifest.json"),
+                    &serde_json::to_vec_pretty(
+                        &json!({"engine":baseline::ENGINE,"resourceProfile":doc.resource_profile(),"pages":s.pages.len(),"width":s.width,"height":s.height,"diagnostics":s.diagnostics,
+                        "slides":s.pages.iter().enumerate().map(|(i,p)|json!({"id":p.id,"file":format!("slide-{:03}.png",first+i+1),"stepCount":show::step_count(&p.show),"stepsExported":steps && !p.show.animations.is_empty(),"show":p.show})).collect::<Vec<_>>()}),
+                    )?,
+                )?;
+                Ok(())
+            })?;
             print(&json!({"output":out,"pages":s.pages.len(),"nativeRenderer":true}))?;
         }
         Command::Export {

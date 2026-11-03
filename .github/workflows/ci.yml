@@ -48,6 +48,7 @@ jobs:
           target/debug/slide-shuttle render examples/demo.xml --out examples/output/preview --pdf --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
           target/debug/slide-shuttle render examples/components.xml --out examples/output/components-native --pdf --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
           target/debug/slide-shuttle render examples/project/deck.xml --out examples/output/project-native --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
+          target/debug/slide-shuttle render examples/show.xml --out examples/output/show-native --steps --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
           target/debug/slide-shuttle export examples/demo.xml --out examples/output/SlideShuttle-demo.pptx --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
       - run: cargo build -p slide-shuttle-wasm --target wasm32-unknown-unknown --release --locked
       - run: cargo install wasm-bindgen-cli --version 0.2.130 --locked
