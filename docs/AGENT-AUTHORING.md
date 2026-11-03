@@ -14,6 +14,6 @@
 
 当前工具没有自动审美评分、自动区域冻结、自动碰撞修复、原包 patch 或任意 PPTX 无损回写。不要把多次编译成功作为这些能力的证据。
 
-同一资源集反复改稿时复用 `Compiler` / `Engine`；每版生成 `CompiledDocument` / `CompiledDeck`，再逐页渲染。编译成功后仍需检查 `inspect().valid` 与诊断；无效场景可以读取诊断，但不能渲染或导出。浏览器批量操作优先在 Worker 内运行。文字测量与生命周期说明见 [渲染 API](RENDERING-0.2.0.md)。
+同一资源集反复改稿时复用 `Compiler` / `Engine`；每版生成 `CompiledDocument` / `CompiledDeck`，再逐页渲染。编译成功后仍需检查 `inspect().valid` 与诊断；无效场景可以读取诊断，但不能渲染或导出。浏览器批量操作优先在 Worker 内运行。文字测量与生命周期说明见 [渲染 API](RENDERING.md)。
 
 可直接使用的创作 Skill 在 [skills/slideshuttle](../skills/slideshuttle/SKILL.md)，包含构图选择、可执行示例、构建脚本和渲染后复核流程。

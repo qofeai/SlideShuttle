@@ -2,7 +2,7 @@
 
 对已有 SlideShuttle 源稿保留稳定 ID、资源和旁车，沿着用户意图改动。`scripts/build.py` 会执行 CLI 原有保护，不会自动接受重建损失。
 
-原始 PPTX 的导入是有限重建，通常变为绝对布局；不能恢复作者的组件/Grid 意图，也不保证任意文件无损。需要此模式时读取当前仓库 README 的“导入与继续改稿”以及 `docs/OOXML-IMPORT-0.3.0.md`。
+原始 PPTX 的导入是有限重建，通常变为绝对布局；不能恢复作者的组件/Grid 意图，也不保证任意文件无损。需要此模式时读取当前仓库 README 的“导入与继续改稿”以及 `docs/OOXML-IMPORT.md`。
 
 ```bash
 slide-shuttle import original.pptx --out imported \
