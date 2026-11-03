@@ -90,6 +90,8 @@ enum Command {
     Inspect {
         input: PathBuf,
     },
+    /// List Shape presets with their adjust values and defaults.
+    Shapes,
     Diff {
         #[command(flatten)]
         input: Input,
@@ -334,6 +336,16 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             print(
                 &json!({"output":out,"source":out.join("deck.xml"),"losses":imported.snapshot.losses,"note":"Import reconstructs supported objects into absolute layout; inspect losses before rebuilding"}),
+            )?;
+        }
+        Command::Shapes => {
+            print(
+                &preset::catalog()
+                    .into_iter()
+                    .map(|(name, adjust)| {
+                        json!({"name": name, "adjust": adjust.into_iter().map(|(k, v)| json!({"name": k, "default": v})).collect::<Vec<_>>()})
+                    })
+                    .collect::<Vec<_>>(),
             )?;
         }
         Command::Inspect { input } => {

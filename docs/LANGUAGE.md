@@ -54,7 +54,7 @@ deck/
 | `Group` | 与 Box 同样布局；PPTX 输出一层原生组；不支持嵌套 Group、组旋转或组级透明度 |
 | `Text` | 行内内容（文本、`Span`、`A`、`br`），或只含 `P` / `List` 的段落内容；保留作者换行并自动折行，见下文“富文本” |
 | `Image` | `src` 为 Asset ID 或相对路径；PNG/JPEG；contain / cover / fill；边框、背景放在外层 Box；不支持图片圆角 |
-| `Shape` | `shape="rect|ellipse|line"`，默认 rect |
+| `Shape` | `shape` 为 187 种 OOXML 预设之一（默认 rect），如 triangle、rightArrow、star5、wedgeRoundRectCallout、bentConnector3；`adjust` 为预设调整值。完整列表与默认值见 [预设形状](SHAPES.md) 或 `slide-shuttle shapes` |
 | `Path` | `d` 为绝对 M/L/C/Z；`viewBox="100 100"` 为逻辑宽高；不是完整 SVG |
 | `Table` | `Row` 内 `Cell`，矩形纯文字数据；`columns="2 1"` 为列宽比例；等高行、固定表头配色和边框，无合并单元格 |
 | `Chart` | `type="bar|line"`；`Labels` 用 `|` 分隔；`Series name="…" color="#…"` 内空格分隔有限数值；最多 8 系列、100 分类 |

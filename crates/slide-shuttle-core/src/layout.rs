@@ -211,12 +211,11 @@ fn build(
         .collect::<Result<Vec<_>>>()?;
     let mut style = box_style(&n.style)?;
     // A line's or path's border is its stroke, drawn along the geometry; it takes no box space.
-    if matches!(
-        n.kind,
-        Kind::Shape {
-            shape: ShapeKind::Line
-        } | Kind::Path { .. }
-    ) {
+    if match &n.kind {
+        Kind::Shape { shape } => shape.is_open(),
+        Kind::Path { .. } => true,
+        _ => false,
+    } {
         style.border = taffy::geometry::Rect::zero();
     }
     let context = Leaf {
@@ -516,15 +515,14 @@ fn visual(n: &Node, item: &mut Item) -> Result<()> {
             "box-shadow needs the Text's box to be visible: give it a background or border",
         ));
     }
-    let open_line = matches!(
-        n.kind,
-        Kind::Shape {
-            shape: ShapeKind::Line
-        } | Kind::Path { .. }
-    );
+    let open_line = match &n.kind {
+        Kind::Shape { shape } => shape.is_open(),
+        Kind::Path { .. } => true,
+        _ => false,
+    };
     if item.markers.iter().any(Option::is_some) && !open_line {
         return Err(invalid(
-            "marker-start/marker-end apply to line Shapes and Paths",
+            "marker-start/marker-end apply to lines, connectors and Paths",
         ));
     }
     if matches!(n.kind, Kind::Image { .. })
@@ -870,7 +868,7 @@ impl Emitter<'_> {
                         .unwrap_or("contain".into()),
                 }
             }
-            Kind::Shape { shape } => Draw::Shape(*shape),
+            Kind::Shape { shape } => Draw::Shape(shape.clone()),
             Kind::Path { data, view_box } => Draw::Path {
                 data: data.clone(),
                 view_box: *view_box,
