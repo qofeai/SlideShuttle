@@ -488,20 +488,28 @@ fn write_item(
             let geom = if let Draw::Path { .. } = item.kind {
                 custom_geometry(item)?
             } else {
-                let name = match &item.kind {
-                    Draw::Shape(ShapeKind::Ellipse) => "ellipse",
-                    Draw::Shape(ShapeKind::Line) => "line",
-                    _ if item.radius > 0.0 => "roundRect",
-                    _ => "rect",
-                };
-                let adjust = if name == "roundRect" {
-                    let v = (item.radius / item.rect.width.min(item.rect.height).max(1.0)
-                        * 100000.0)
-                        .round()
-                        .min(50000.0) as i64;
-                    format!("<a:gd name=\"adj\" fmla=\"val {v}\"/>")
-                } else {
-                    String::new()
+                let (name, adjust) = match &item.kind {
+                    Draw::Shape(s) if s.is("rect") && item.radius > 0.0 => {
+                        let v = (item.radius / item.rect.width.min(item.rect.height).max(1.0)
+                            * 100000.0)
+                            .round()
+                            .min(50000.0) as i64;
+                        (
+                            "roundRect",
+                            format!("<a:gd name=\"adj\" fmla=\"val {v}\"/>"),
+                        )
+                    }
+                    Draw::Shape(s) => (
+                        s.preset.as_str(),
+                        crate::preset::adjust_names(&s.preset)
+                            .iter()
+                            .zip(&s.adjust)
+                            .map(|(n, v)| {
+                                format!("<a:gd name=\"{n}\" fmla=\"val {}\"/>", v.round() as i64)
+                            })
+                            .collect(),
+                    ),
+                    _ => ("rect", String::new()),
                 };
                 format!("<a:prstGeom prst=\"{name}\"><a:avLst>{adjust}</a:avLst></a:prstGeom>")
             };

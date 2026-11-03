@@ -169,7 +169,7 @@ fn errors_name_every_failing_element_with_its_position() {
         "{error}"
     );
     assert!(
-        error.contains("line 1, column 127: Shape shape: unknown variant `star`, expected one of `rect`, `ellipse`, `line`"),
+        error.contains("line 1, column 127: unknown Shape shape star; use an OOXML preset name"),
         "{error}"
     );
     let d = parse(&doc(
@@ -472,6 +472,69 @@ fn visual_styles_reject_what_cannot_be_drawn_consistently() {
     }
 }
 #[test]
+fn preset_shapes_are_native_and_round_trip() {
+    let source = doc(
+        r##"<Shape id="arrow" shape="rightArrow" adjust="30000 60000" style="position:absolute;left:20px;top:20px;width:200px;height:100px;background:#2563EB"/>
+        <Shape id="can" shape="can" style="position:absolute;left:260px;top:20px;width:100px;height:120px;background:#EA580C;border:2px solid #0F172A"/>
+        <Shape id="elbow" shape="bentConnector3" style="position:absolute;left:20px;top:180px;width:200px;height:100px;border:2px solid #0F172A;marker-end:arrow"/>
+        <Shape id="bubble" shape="wedgeRoundRectCallout" style="position:absolute;left:400px;top:20px;width:200px;height:100px;background:#FDE68A"/>"##,
+    );
+    let (_, r, s, pptx) = compile(&source);
+    let page = image::load_from_memory(&render::render_png(&s, 0, &r, 1.0).unwrap())
+        .unwrap()
+        .to_rgba8();
+    assert_eq!(
+        page.get_pixel(30, 70).0,
+        [37, 99, 235, 255],
+        "inside the arrow shaft"
+    );
+    assert_eq!(
+        page.get_pixel(30, 30).0,
+        [255, 255, 255, 255],
+        "above the 30% shaft"
+    );
+    let top = page.get_pixel(310, 28).0;
+    let body = page.get_pixel(310, 100).0;
+    assert!(top[0] > body[0], "the can's lid is a lightened sub-path");
+    let slide = String::from_utf8(zip_read(&pptx)["ppt/slides/slide1.xml"].clone()).unwrap();
+    for native in [
+        r#"<a:prstGeom prst="rightArrow"><a:avLst><a:gd name="adj1" fmla="val 30000"/><a:gd name="adj2" fmla="val 60000"/></a:avLst>"#,
+        r#"prst="can""#,
+        r#"prst="bentConnector3""#,
+        r#"<a:tailEnd type="triangle""#,
+    ] {
+        assert!(slide.contains(native), "{native}");
+    }
+    let imported = import::import_pptx(&pptx).unwrap();
+    assert!(
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r).unwrap();
+    assert_eq!(
+        render::render_png(&again, 0, &r, 1.0).unwrap(),
+        render::render_png(&s, 0, &r, 1.0).unwrap()
+    );
+    for (inner, why) in [
+        (
+            r#"<Shape id="s" shape="rightArrow" adjust="1 2 3"/>"#,
+            "too many adjust values",
+        ),
+        (
+            r#"<Shape id="s" shape="rightArrow" adjust="wide"/>"#,
+            "non-numeric adjust",
+        ),
+        (
+            r#"<Shape id="s" shape="star5" style="width:9px;height:9px;marker-end:arrow"/>"#,
+            "markers on a closed preset",
+        ),
+    ] {
+        let failed = parse(&doc(inner)).and_then(|d| layout(&d, &resources()).map(|_| ()));
+        assert!(failed.is_err(), "{why}");
+    }
+}
+#[test]
 fn declared_font_family_must_be_in_its_file() {
     let mut r = resources();
     r.fonts[0].family = Some("Brand".into());
@@ -541,18 +604,8 @@ fn empty_pptx_text_bodies_preserve_lines_shapes_and_paths() {
     assert_eq!(imported.snapshot.objects.len(), 4);
     let deck = parse_files("deck.xml", &imported.files).unwrap();
     let nodes = &deck.slides[0].nodes;
-    assert!(matches!(
-        &nodes[0].kind,
-        Kind::Shape {
-            shape: ShapeKind::Line
-        }
-    ));
-    assert!(matches!(
-        &nodes[1].kind,
-        Kind::Shape {
-            shape: ShapeKind::Ellipse
-        }
-    ));
+    assert!(matches!(&nodes[0].kind, Kind::Shape { shape } if shape.is("line")));
+    assert!(matches!(&nodes[1].kind, Kind::Shape { shape } if shape.is("ellipse")));
     assert!(matches!(&nodes[2].kind, Kind::Path { .. }));
     assert!(
         matches!(&nodes[3].kind, Kind::Text{paragraphs} if paragraphs.iter().flat_map(|p| &p.spans).all(|s|s.text.is_empty()))

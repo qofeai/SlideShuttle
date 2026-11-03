@@ -823,7 +823,11 @@ impl Reader<'_> {
             }
             let mut css = style_css(&props, false);
             if turned {
-                if tag == "grpSp" || tag == "graphicFrame" || has_text && boxed {
+                // Text in a non-rectangular preset gets its box from a Shape behind it.
+                let shaped = desc(n, A, "prstGeom")
+                    .and_then(preset_shape)
+                    .is_some_and(|(p, _)| p != "rect");
+                if tag == "grpSp" || tag == "graphicFrame" || has_text && boxed && !shaped {
                     self.loss(page, &name, "rotation/flip is not reconstructed");
                 } else {
                     css.push_str(&format!(
@@ -1154,31 +1158,54 @@ impl Reader<'_> {
             let r = number(bodypr, "rIns", 91440);
             let t = number(bodypr, "tIns", 45720);
             let b = number(bodypr, "bIns", 45720);
-            format!(
-                "<Text id=\"{import_id}\" style=\"{pos};{}{white_space}{anchor};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
-                xml(css)
-            )
-        } else if let Some(geom) = desc(n, A, "prstGeom") {
-            let shape = match geom.attribute("prst").unwrap_or("rect") {
-                "rect" | "roundRect" => "rect",
-                "ellipse" => "ellipse",
-                "line" => "line",
-                other => {
-                    self.loss(
-                        page,
-                        name,
-                        format!("preset shape {other} approximated as rectangle"),
-                    );
-                    "rect"
-                }
+            let text = |css: &str| {
+                format!(
+                    "<Text id=\"{import_id}\" style=\"{pos};{}{white_space}{anchor};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
+                    xml(css)
+                )
             };
-            let ends = if shape == "line" {
+            // A non-rectangular preset draws its fill and outline as a Shape under the text.
+            match desc(n, A, "prstGeom").and_then(preset_shape) {
+                Some((preset, adjust)) if preset != "rect" => {
+                    let boxed = |d: &&str| {
+                        ["background", "border-", "box-shadow"]
+                            .iter()
+                            .any(|p| d.starts_with(p))
+                    };
+                    let (under, over): (Vec<&str>, Vec<&str>) = css.split(';').partition(boxed);
+                    let turn = over
+                        .iter()
+                        .find(|d| d.starts_with("transform:"))
+                        .map(|d| format!(";{d}"))
+                        .unwrap_or_default();
+                    format!(
+                        "<Shape id=\"{import_id}/shape\" shape=\"{preset}\"{adjust} style=\"{pos};{}{}\"/>{}",
+                        xml(&under.join(";")),
+                        xml(&turn),
+                        text(&over.join(";"))
+                    )
+                }
+                _ => text(css),
+            }
+        } else if let Some(geom) = desc(n, A, "prstGeom") {
+            let Some((shape, adjust)) = preset_shape(geom) else {
+                self.loss(
+                    page,
+                    name,
+                    format!(
+                        "preset shape {} is not reconstructed",
+                        geom.attribute("prst").unwrap_or("")
+                    ),
+                );
+                return Ok(String::new());
+            };
+            let ends = if crate::preset::is_open(&shape) {
                 markers(props)
             } else {
                 String::new()
             };
             format!(
-                "<Shape id=\"{import_id}\" shape=\"{shape}\" style=\"{pos};{}{ends}\"/>",
+                "<Shape id=\"{import_id}\" shape=\"{shape}\"{adjust} style=\"{pos};{}{ends}\"/>",
                 xml(css)
             )
         } else if let Some(custom) = desc(n, A, "custGeom") {
@@ -1472,4 +1499,43 @@ fn markers(p: &Value) -> String {
         .iter()
         .filter_map(|(k, css)| p[*k].as_str().map(|m| format!(";{css}:{m}")))
         .collect()
+}
+/// The `shape` name and `adjust` attribute for a preset geometry; `roundRect` becomes a rect
+/// with border-radius. Unknown presets or non-constant adjust formulas give `None`.
+fn preset_shape(geom: X<'_, '_>) -> Option<(String, String)> {
+    let prst = geom.attribute("prst").unwrap_or("rect");
+    if matches!(prst, "rect" | "roundRect") {
+        return Some(("rect".into(), String::new()));
+    }
+    if !crate::preset::exists(prst) {
+        return None;
+    }
+    let given = geom
+        .descendants()
+        .filter(|g| g.has_tag_name((A, "gd")))
+        .map(|g| {
+            let value = g
+                .attribute("fmla")?
+                .strip_prefix("val ")?
+                .trim()
+                .parse::<f64>()
+                .ok()?;
+            Some((g.attribute("name")?, value))
+        })
+        .collect::<Option<BTreeMap<_, _>>>()?;
+    let defaults = crate::preset::catalog()
+        .into_iter()
+        .find(|(name, _)| *name == prst)
+        .map(|(_, adjust)| adjust)
+        .unwrap_or_default();
+    let adjust = if given.is_empty() {
+        String::new()
+    } else {
+        let values = defaults
+            .iter()
+            .map(|(name, default)| given.get(name).copied().unwrap_or(*default).to_string())
+            .collect::<Vec<_>>();
+        format!(" adjust=\"{}\"", values.join(" "))
+    };
+    Some((prst.into(), adjust))
 }

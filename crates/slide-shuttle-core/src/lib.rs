@@ -7,6 +7,7 @@ pub mod layout;
 pub mod model;
 pub mod parser;
 pub mod pptx;
+pub mod preset;
 pub mod render;
 mod text;
 pub use compiler::{CompiledDocument, Compiler, RenderStats, TextMeasurement};

@@ -123,12 +123,22 @@ pub enum Kind {
         series: Vec<Series>,
     },
 }
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ShapeKind {
-    Rect,
-    Ellipse,
-    Line,
+/// An OOXML preset geometry (`rect`, `ellipse`, `line`, `rightArrow`, `star5`, …) and its
+/// adjust values in DrawingML units (usually 1/100000 of the frame).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ShapeKind {
+    pub preset: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjust: Vec<f64>,
+}
+impl ShapeKind {
+    pub fn is(&self, preset: &str) -> bool {
+        self.preset == preset
+    }
+    /// Lines and connectors: their border is a stroke along open geometry.
+    pub fn is_open(&self) -> bool {
+        crate::preset::is_open(&self.preset)
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -555,7 +555,7 @@ impl<'a> Context<'a> {
         let mut allowed = vec!["id", "class", "style"];
         allowed.extend_from_slice(match tag {
             "Image" => &["src"][..],
-            "Shape" => &["shape"],
+            "Shape" => &["shape", "adjust"],
             "Path" => &["d", "viewBox"],
             "Table" => &["columns"],
             "Chart" => &["type"],
@@ -588,9 +588,37 @@ impl<'a> Context<'a> {
             "Image" => Kind::Image {
                 src: substitute(required(n, "src")?, params)?,
             },
-            "Shape" => Kind::Shape {
-                shape: keyword(n.attribute("shape").unwrap_or("rect"), "Shape shape")?,
-            },
+            "Shape" => {
+                let preset = n.attribute("shape").unwrap_or("rect");
+                if !crate::preset::exists(preset) {
+                    return Err(invalid(format!(
+                        "unknown Shape shape {preset}; use an OOXML preset name such as rect, ellipse, line, triangle, rightArrow, star5 or wedgeRoundRectCallout"
+                    )));
+                }
+                let adjust = substitute(n.attribute("adjust").unwrap_or(""), params)?
+                    .split_whitespace()
+                    .map(|v| {
+                        v.parse::<f64>()
+                            .ok()
+                            .filter(|v| v.is_finite())
+                            .ok_or_else(|| invalid(format!("invalid adjust value {v}")))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let names = crate::preset::adjust_names(preset);
+                if adjust.len() > names.len() {
+                    return Err(invalid(format!(
+                        "{preset} takes at most {} adjust values ({})",
+                        names.len(),
+                        names.join(" ")
+                    )));
+                }
+                Kind::Shape {
+                    shape: ShapeKind {
+                        preset: preset.into(),
+                        adjust,
+                    },
+                }
+            }
             "Path" => {
                 let vals = n
                     .attribute("viewBox")

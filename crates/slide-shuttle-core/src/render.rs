@@ -1,8 +1,9 @@
 //! Native drawing of the resolved scene. Neither backend performs text layout.
 use crate::model::*;
+use crate::preset::PathFill;
 use std::collections::{BTreeMap, btree_map::Entry};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Command {
     M(f32, f32),
     L(f32, f32),
@@ -41,10 +42,10 @@ pub(crate) fn item_path(item: &Item) -> Result<Vec<Command>> {
         }
         return Ok(commands);
     }
-    if matches!(item.kind, Draw::Shape(ShapeKind::Line)) {
+    if matches!(&item.kind, Draw::Shape(s) if s.is("line")) {
         return Ok(vec![Command::M(x, y), Command::L(x + w, y + h)]);
     }
-    if matches!(item.kind, Draw::Shape(ShapeKind::Ellipse)) {
+    if matches!(&item.kind, Draw::Shape(s) if s.is("ellipse")) {
         let (a, b, cx, cy) = (w / 2.0, h / 2.0, x + w / 2.0, y + h / 2.0);
         let k = 0.5522848;
         return Ok(vec![
@@ -70,6 +71,19 @@ pub(crate) fn item_path(item: &Item) -> Result<Vec<Command>> {
         Command::C(x, y + t - k, x + t - k, y, x + t, y),
         Command::Z,
     ])
+}
+/// What an item paints: sub-paths with their fill shading and whether they are stroked.
+/// Presets other than rect, ellipse and line come from the OOXML definitions.
+fn outlines(item: &Item) -> Result<Vec<(Vec<Command>, PathFill, bool)>> {
+    if let Draw::Shape(s) = &item.kind
+        && !["rect", "ellipse", "line"].contains(&s.preset.as_str())
+    {
+        return Ok(crate::preset::geometry(&s.preset, item.rect, &s.adjust)?
+            .into_iter()
+            .map(|p| (p.commands, p.fill, p.stroke))
+            .collect());
+    }
+    Ok(vec![(item_path(item)?, PathFill::Norm, true)])
 }
 fn rect_commands(r: Rect) -> [Command; 5] {
     [
@@ -176,7 +190,11 @@ fn marker_outlines(item: &Item) -> Result<Vec<Vec<Command>>> {
     if item.markers.iter().all(Option::is_none) {
         return Ok(Vec::new());
     }
-    let points = item_path(item)?
+    let points = outlines(item)?
+        .into_iter()
+        .find(|o| o.2)
+        .map(|o| o.0)
+        .unwrap_or_default()
         .into_iter()
         .flat_map(|c| match c {
             Command::M(x, y) | Command::L(x, y) => vec![(x, y)],
@@ -239,7 +257,10 @@ fn marker_outlines(item: &Item) -> Result<Vec<Vec<Command>>> {
                     width: 2.0 * half,
                     height: 2.0 * half,
                 },
-                kind: Draw::Shape(ShapeKind::Ellipse),
+                kind: Draw::Shape(ShapeKind {
+                    preset: "ellipse".into(),
+                    adjust: Vec::new(),
+                }),
                 ..Item::default()
             })?,
         });
@@ -261,11 +282,29 @@ fn shadow_layer(
             .get(src)
             .ok_or_else(|| invalid(format!("missing image {src}")))?;
         let (w, h) = image_size(bytes)?;
-        rect_commands(visible_image(item.rect, w as f32, h as f32, fit)).to_vec()
+        vec![(
+            rect_commands(visible_image(item.rect, w as f32, h as f32, fit)).to_vec(),
+            PathFill::Norm,
+            true,
+        )]
     } else {
-        item_path(item)?
+        outlines(item)?
     };
-    let Some(path) = skia_path(&outline).and_then(|p| p.transform(turn_transform(item))) else {
+    let solid =
+        item.fill.3 > 0 || item.gradient.is_some() || matches!(item.kind, Draw::Image { .. });
+    // A filled item casts the shadow of its filled parts; an outline casts its strokes.
+    let mut builder = tiny_skia::PathBuilder::new();
+    for (commands, shade, stroked) in &outline {
+        if (solid && *shade != PathFill::None || !solid && *stroked)
+            && let Some(p) = skia_path(commands)
+        {
+            builder.push_path(&p);
+        }
+    }
+    let Some(path) = builder
+        .finish()
+        .and_then(|p| p.transform(turn_transform(item)))
+    else {
         return Ok(None);
     };
     let sigma = s.blur / 2.0 * scale;
@@ -284,7 +323,7 @@ fn shadow_layer(
         .pre_scale(scale, scale)
         .pre_translate(s.dx, s.dy);
     let color = paint(s.color, item.opacity);
-    if item.fill.3 > 0 || item.gradient.is_some() || matches!(item.kind, Draw::Image { .. }) {
+    if solid {
         layer.fill_path(&path, &color, tiny_skia::FillRule::Winding, transform, None);
     } else {
         let stroke = tiny_skia::Stroke {
@@ -481,29 +520,34 @@ fn paint_png<'r>(
         );
     }
     let transform = tiny_skia::Transform::from_scale(scale, scale).pre_concat(turn_transform(item));
-    if (item.fill.3 > 0 || item.stroke_width > 0.0)
-        && let Some(path) = skia_path(&item_path(item)?)
-    {
-        if item.fill.3 > 0 {
-            let mut fill = paint(item.fill, item.opacity);
-            if let Some(g) = &item.gradient {
-                fill.shader = skia_gradient(item, g)?;
+    if item.fill.3 > 0 || item.stroke_width > 0.0 {
+        for (commands, shade, stroked) in outlines(item)? {
+            let Some(path) = skia_path(&commands) else {
+                continue;
+            };
+            if item.fill.3 > 0 && shade != PathFill::None {
+                let mut fill = paint(shade.shade(item.fill), item.opacity);
+                if let Some(g) = &item.gradient {
+                    fill.shader = skia_gradient(item, g)?;
+                }
+                pixmap.fill_path(&path, &fill, tiny_skia::FillRule::Winding, transform, None);
             }
-            pixmap.fill_path(&path, &fill, tiny_skia::FillRule::Winding, transform, None);
+            if item.stroke_width > 0.0 && stroked {
+                pixmap.stroke_path(
+                    &path,
+                    &paint(item.stroke, item.opacity),
+                    &tiny_skia::Stroke {
+                        width: item.stroke_width,
+                        dash: dash_array(item).and_then(|d| tiny_skia::StrokeDash::new(d, 0.0)),
+                        ..Default::default()
+                    },
+                    transform,
+                    None,
+                );
+            }
         }
         if item.stroke_width > 0.0 {
             let stroke_paint = paint(item.stroke, item.opacity);
-            pixmap.stroke_path(
-                &path,
-                &stroke_paint,
-                &tiny_skia::Stroke {
-                    width: item.stroke_width,
-                    dash: dash_array(item).and_then(|d| tiny_skia::StrokeDash::new(d, 0.0)),
-                    ..Default::default()
-                },
-                transform,
-                None,
-            );
             for marker in marker_outlines(item)? {
                 if let Some(path) = skia_path(&marker) {
                     pixmap.fill_path(
@@ -773,12 +817,7 @@ fn paint_pdf_item(
     fonts: &mut BTreeMap<(usize, u32), krilla::text::Font>,
     links: &mut Vec<(Rect, String)>,
 ) -> Result<()> {
-    surface.set_fill(if item.fill.3 > 0 {
-        Some(pdf_fill(item.fill, item.opacity))
-    } else {
-        None
-    });
-    if let Some(g) = &item.gradient {
+    let gradient = if let Some(g) = &item.gradient {
         let r = item.rect;
         let stops = g
             .stops
@@ -819,13 +858,15 @@ fn paint_pdf_item(
             }
             .into()
         };
-        surface.set_fill(Some(krilla::paint::Fill {
+        Some(krilla::paint::Fill {
             paint,
             opacity: krilla::num::NormalizedF32::ONE,
             rule: Default::default(),
-        }));
-    }
-    surface.set_stroke(if item.stroke_width > 0.0 {
+        })
+    } else {
+        None
+    };
+    let stroke = if item.stroke_width > 0.0 {
         Some(krilla::paint::Stroke {
             paint: krilla::color::rgb::Color::new(item.stroke.0, item.stroke.1, item.stroke.2)
                 .into(),
@@ -837,11 +878,22 @@ fn paint_pdf_item(
         })
     } else {
         None
-    });
-    if (item.fill.3 > 0 || item.stroke_width > 0.0)
-        && let Some(path) = pdf_path(&item_path(item)?)
-    {
-        surface.draw_path(&path);
+    };
+    if item.fill.3 > 0 || item.stroke_width > 0.0 {
+        for (commands, shade, stroked) in outlines(item)? {
+            let Some(path) = pdf_path(&commands) else {
+                continue;
+            };
+            surface.set_fill(if item.fill.3 == 0 || shade == PathFill::None {
+                None
+            } else if gradient.is_some() {
+                gradient.clone()
+            } else {
+                Some(pdf_fill(shade.shade(item.fill), item.opacity))
+            });
+            surface.set_stroke(if stroked { stroke.clone() } else { None });
+            surface.draw_path(&path);
+        }
     }
     let markers = marker_outlines(item)?;
     if !markers.is_empty() {
