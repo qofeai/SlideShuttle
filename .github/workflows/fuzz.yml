@@ -20,7 +20,7 @@ jobs:
       - name: Seeds
         run: |
           cargo build -p slide-shuttle-cli --locked
-          mkdir -p seeds/source seeds/pptx seeds/slide
+          mkdir -p seeds/source seeds/pptx seeds/slide fuzz/corpus/${{ matrix.target }}
           cp examples/*.xml fuzz/seeds/*.xml seeds/source/
           target/debug/slide-shuttle export fuzz/seeds/latin.xml --out seeds/pptx/latin.pptx \
             --font crates/slide-shuttle-core/tests/fonts/DejaVuSans.ttf \
