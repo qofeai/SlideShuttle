@@ -56,7 +56,7 @@ target/debug/slide-shuttle export examples/demo.xml --out examples/output/demo.p
 
 一份稿可以拆成入口 `deck.xml`、共享库 `<Library src>` 和每页一个文件的 `<Slide src>`，页内元素 ID 只需在本页唯一，`check` / `render --page <id>` 可只处理一页，见 [项目结构](docs/LANGUAGE.md#项目结构)。
 
-支持 `Box`、`Group`、`Text` / `Span` / `br`、`Image`、`Shape`、`Path`、`Table`、`Chart`，以及 `Token`、`Style`、`Component` / `Use`。这是一门静态语言，不能执行 JavaScript。完整语法与限制见 [语言说明](docs/LANGUAGE.md)。
+支持 `Box`、`Group`、`Text` / `Span` / `br`、`Image`、`Shape`、`Path`、`Table`、`Chart`，以及 `Token`、`Style`、`Component` / `Use`；放映用的页面切换、`Animate` 动画和 `Notes` 备注写成原生 PPTX。这是一门静态语言，不能执行 JavaScript。完整语法与限制见 [语言说明](docs/LANGUAGE.md)。
 
 ## 导入与继续改稿
 

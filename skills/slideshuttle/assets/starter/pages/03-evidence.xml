@@ -1,4 +1,4 @@
-<Slide id="evidence" background="#FFFFFF">
+<Slide id="evidence" type="content" background="#FFFFFF">
   <Box id="frame" class="frame">
     <Text id="kicker" class="kicker">02 / GIVE EVIDENCE ENOUGH ROOM</Text>
     <Text id="title" class="heading">让证据占据足够大的位置。</Text>
@@ -17,4 +17,7 @@
     </Box>
     <Text id="note" style="height:56px;font-size:18px;line-height:28px;color:#677B82">本页数据仅供展示布局，不代表真实测量、业务表现或基准成绩。真实任务应替换为有来源的数据。</Text>
   </Box>
+  <Animate target="chart" effect="wipe-in"/>
+  <Animate target="number" effect="fade-in" trigger="after-previous"/>
+  <Animate target="claim" effect="fade-in" trigger="with-previous"/>
 </Slide>

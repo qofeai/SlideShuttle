@@ -79,6 +79,118 @@ pub struct Slide {
     pub id: String,
     pub background: String,
     pub nodes: Vec<Node>,
+    #[serde(flatten)]
+    pub show: Show,
+}
+/// What a slide does in a slide show; none of it changes the static page.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Show {
+    pub page_type: Option<PageType>,
+    pub transition: Option<Transition>,
+    pub animations: Vec<Animation>,
+    /// Speaker notes, one string per paragraph.
+    pub notes: Vec<String>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PageType {
+    Cover,
+    Contents,
+    Section,
+    Content,
+    End,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TransitionKind {
+    Fade,
+    Push,
+    Wipe,
+    Cover,
+    Split,
+    Zoom,
+    Cut,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Speed {
+    Fast,
+    Medium,
+    Slow,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Transition {
+    pub kind: TransitionKind,
+    pub direction: Option<Direction>,
+    pub speed: Speed,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Effect {
+    Appear,
+    FadeIn,
+    FlyIn,
+    ZoomIn,
+    WipeIn,
+    FloatIn,
+    PeekIn,
+    RiseIn,
+    Pulse,
+    GrowShrink,
+    Spin,
+    Teeter,
+    FillColor,
+    Transparency,
+    ColorPulse,
+    Disappear,
+    FadeOut,
+    FlyOut,
+    ZoomOut,
+    WipeOut,
+    FloatOut,
+    MotionPath,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Trigger {
+    Click,
+    WithPrevious,
+    AfterPrevious,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Easing {
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Animation {
+    /// Id of a leaf element or Group on the same slide.
+    pub target: String,
+    pub effect: Effect,
+    pub trigger: Trigger,
+    pub direction: Option<Direction>,
+    /// Milliseconds; the effect's default when left out.
+    pub duration: Option<u32>,
+    pub delay: u32,
+    pub easing: Easing,
+    pub repeat: u32,
+    /// fill-color and color-pulse.
+    pub color: Option<Color>,
+    /// transparency: the target opacity.
+    pub amount: Option<f32>,
+    /// motion-path: SVG path data in px, relative to the element, starting at `M 0 0`.
+    pub path: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Source {
@@ -507,6 +619,7 @@ pub struct ScenePage {
     /// Full-page item: a solid or gradient Box, or an Image covering the page.
     pub background: Item,
     pub items: Vec<Item>,
+    pub show: Show,
 }
 #[derive(Clone, Debug)]
 pub struct Item {

@@ -980,6 +980,118 @@ fn chart_options_that_do_not_apply_are_errors() {
     }
 }
 #[test]
+fn slide_show_is_native_and_round_trips() {
+    let source = r##"<Deck width="640px" height="360px" font-family="DejaVu Sans" transition="fade"><Slide id="p" type="cover" transition="push up fast"><Box id="row" style="width:600px;height:120px;display:flex;gap:20px"><Text id="a" style="width:180px;height:80px;background:#2563EB;padding:8px;font-size:16px;line-height:24px">One</Text><Shape id="b" shape="ellipse" style="width:80px;height:80px;background:#DC2626"/><Group id="g" style="width:120px;height:80px"><Shape id="c" style="width:60px;height:60px;background:#16A34A"/></Group></Box>
+<Animate target="a" effect="fly-in" direction="left" duration="0.8s" easing="ease-out"/>
+<Animate target="b" effect="fill-color" color="#F59E0B" trigger="with-previous"/>
+<Animate target="c" effect="motion-path" path="M 0 0 L 40 20" trigger="after-previous" delay="100ms"/>
+<Animate target="a" effect="fade-out"/>
+<Notes>
+  First point.
+  Second point.
+</Notes></Slide></Deck>"##;
+    let (_, r, s, b) = compile(source);
+    let parts = zip_read(&b);
+    let slide = String::from_utf8(parts["ppt/slides/slide1.xml"].clone()).unwrap();
+    for native in [
+        r#"<p:transition spd="fast"><p:push dir="u"/></p:transition>"#,
+        r#"presetID="2" presetClass="entr" presetSubtype="2" decel="50000""#,
+        r#"nodeType="clickEffect""#,
+        r#"presetClass="emph""#,
+        r#"<p:animMotion origin="layout" path="M 0 0 L 0.0625 0.055555556 E""#,
+        r#"presetClass="exit""#,
+        "<p:bldP spid=",
+    ] {
+        assert!(slide.contains(native), "{native}");
+    }
+    // The text and its painted box play the same effect together.
+    assert_eq!(
+        slide.matches(r#"presetID="2" presetClass="entr""#).count(),
+        2
+    );
+    let notes = String::from_utf8(parts["ppt/notesSlides/notesSlide1.xml"].clone()).unwrap();
+    assert!(notes.contains("<a:t>Second point.</a:t>"));
+    assert!(
+        String::from_utf8_lossy(&parts["ppt/slideLayouts/slideLayout2.xml"])
+            .contains(r#"type="title""#)
+    );
+    let steps = show::steps(&s.pages[0].show);
+    assert_eq!(steps.len(), 3);
+    assert!(steps[0]["a"].hidden && !steps[1].contains_key("a") && steps[2]["a"].hidden);
+    assert_eq!(steps[1]["c"].offset, (40.0, 20.0));
+    let imported = import::import_pptx(&b).unwrap();
+    assert!(
+        imported
+            .snapshot
+            .losses
+            .iter()
+            .all(|l| l.reason.contains("group")),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r).unwrap();
+    let page = &again.pages[0].show;
+    assert_eq!(page.notes, ["First point.", "Second point."]);
+    assert_eq!(page.page_type, Some(PageType::Cover));
+    assert_eq!(page.transition, s.pages[0].show.transition);
+    let looks = show::steps(page);
+    assert_eq!(looks.len(), 3);
+    for (k, step) in steps.iter().enumerate() {
+        assert_eq!(
+            render::render_png_step(&again, 0, &r, 1.0, &looks[k]).unwrap(),
+            render::render_png_step(&s, 0, &r, 1.0, step).unwrap(),
+            "step {k}"
+        );
+    }
+}
+#[test]
+fn animations_that_cannot_play_are_errors() {
+    for (body, message) in [
+        (
+            r#"<Animate target="nope" effect="fade-in"/>"#,
+            "not an element",
+        ),
+        (r#"<Animate target="box" effect="fade-in"/>"#, "use a Group"),
+        (r#"<Animate target="t" effect="fill-color"/>"#, "color"),
+        (
+            r#"<Animate target="t" effect="fade-in" direction="left"/>"#,
+            "direction",
+        ),
+        (
+            r#"<Animate target="t" effect="appear" duration="1s"/>"#,
+            "instant",
+        ),
+        (
+            r#"<Animate target="t" effect="float-in" direction="left"/>"#,
+            "up or down",
+        ),
+        (
+            r#"<Animate target="t" effect="motion-path" path="M 10 0 L 20 0"/>"#,
+            "M 0 0",
+        ),
+        (
+            r#"<Animate target="t" effect="fade-in" duration="500"/>"#,
+            "500ms",
+        ),
+        (r#"<Notes>a</Notes><Notes>b</Notes>"#, "one <Notes>"),
+    ] {
+        let source = doc(&format!(
+            r#"<Box id="box" style="width:100px;height:50px"><Text id="t" style="height:40px">x</Text></Box>{body}"#
+        ));
+        let error = parse(&source).unwrap_err().to_string();
+        assert!(error.contains(message), "{body}: {error}");
+    }
+    assert!(
+        parse(
+            &doc(r#"<Text id="t" style="height:40px">x</Text>"#).replace(
+                r#"<Slide id="p">"#,
+                r#"<Slide id="p" transition="fade left">"#
+            )
+        )
+        .is_err()
+    );
+}
+#[test]
 fn images_are_resources_and_stay_images() {
     let mut r = resources();
     let image = image::RgbaImage::from_pixel(40, 20, image::Rgba([9, 168, 143, 255]));

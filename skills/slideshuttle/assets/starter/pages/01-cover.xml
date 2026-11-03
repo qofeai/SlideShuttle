@@ -1,4 +1,4 @@
-<Slide id="cover" background="#0D2A35">
+<Slide id="cover" type="cover" background="#0D2A35">
   <Box id="frame" class="frame" style="gap:24px">
     <Text id="kicker" class="kicker" style="color:#73D8C2">A CLEAR POINT OF VIEW / 演示编排示例</Text>
     <Box id="grid" style="display:grid;grid-template-columns:7fr 5fr;gap:48px;height:450px">
@@ -19,4 +19,7 @@
     </Box>
     <Text id="footer" style="height:36px;font-size:16px;line-height:26px;color:#86A5AF">结构范例，可替换全部内容、颜色与构图。图形不代表任何真实数据。</Text>
   </Box>
+  <Notes>
+    开场先用一句话说明这份演示要帮观众做什么决定。
+  </Notes>
 </Slide>

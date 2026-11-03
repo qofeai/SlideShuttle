@@ -171,7 +171,17 @@ pub fn parse_project(
     if root.tag_name().name() != "Deck" {
         return Err(located(root, invalid("root must be <Deck>")));
     }
-    attrs(root, &["title", "width", "height", "font-family"]).map_err(|e| located(root, e))?;
+    attrs(
+        root,
+        &["title", "width", "height", "font-family", "transition"],
+    )
+    .map_err(|e| located(root, e))?;
+    let transition = root
+        .attribute("transition")
+        .map(crate::show::transition)
+        .transpose()
+        .map_err(|e| located(root, e))?
+        .flatten();
     let width = length_px(root.attribute("width").unwrap_or("1280px"))?;
     let height = length_px(root.attribute("height").unwrap_or("720px"))?;
     if width <= 0.0 || height <= 0.0 || width > 16384.0 || height > 16384.0 {
@@ -204,6 +214,7 @@ pub fn parse_project(
     }
     let mut cx = Context {
         file: entry.into(),
+        transition,
         ..Context::default()
     };
     let mut styles = Vec::new();
@@ -388,7 +399,7 @@ pub(crate) fn attrs(node: X<'_, '_>, allowed: &[&str]) -> Result<()> {
     }
     Ok(())
 }
-fn required<'a>(n: X<'a, 'a>, key: &str) -> Result<&'a str> {
+pub(crate) fn required<'a>(n: X<'a, 'a>, key: &str) -> Result<&'a str> {
     n.attribute(key)
         .filter(|x| !x.is_empty())
         .ok_or_else(|| invalid(format!("<{}> requires {key}", n.tag_name().name())))
@@ -405,6 +416,8 @@ struct Context<'a> {
     slides: BTreeSet<String>,
     /// Element IDs are unique within one slide.
     ids: BTreeSet<String>,
+    /// The deck's default slide transition.
+    transition: Option<Transition>,
     count: usize,
 }
 impl<'a> Context<'a> {
@@ -470,7 +483,7 @@ impl<'a> Context<'a> {
         }
     }
     fn slide(&mut self, n: X<'_, '_>) -> Result<Slide> {
-        attrs(n, &["id", "background"])?;
+        attrs(n, &["id", "background", "type", "transition"])?;
         let id = required(n, "id")?.to_owned();
         self.ids.clear();
         self.count = 0;
@@ -483,10 +496,60 @@ impl<'a> Context<'a> {
             crate::layout::paint(&background)?;
         }
         let nodes = self.nodes(n, "", &BTreeMap::new(), 0)?;
+        let mut show = Show {
+            page_type: n
+                .attribute("type")
+                .map(|v| keyword(v, "Slide type"))
+                .transpose()?,
+            transition: match n.attribute("transition") {
+                Some(v) => crate::show::transition(v)?,
+                None => self.transition,
+            },
+            ..Show::default()
+        };
+        // Only what PowerPoint draws as one object animates: a leaf element or a Group.
+        let mut animatable = BTreeSet::new();
+        let mut stack = nodes.iter().collect::<Vec<_>>();
+        while let Some(node) = stack.pop() {
+            if node.children.is_empty() || matches!(node.kind, Kind::Group) {
+                animatable.insert(node.id.clone());
+            }
+            stack.extend(&node.children);
+        }
+        let mut errors = Errors::default();
+        for c in n.children().filter(|c| c.is_element()) {
+            match c.tag_name().name() {
+                "Animate" => {
+                    let a = crate::show::animation(c, &animatable).map_err(|e| {
+                        if self.ids.contains(c.attribute("target").unwrap_or("")) {
+                            invalid(format!(
+                                "{e}; a Box with children does not animate as one object, use a Group"
+                            ))
+                        } else {
+                            e
+                        }
+                    });
+                    show.animations.extend(errors.keep(self.source(c), a));
+                }
+                "Notes" if show.notes.is_empty() => {
+                    let notes = crate::show::notes(c);
+                    show.notes = errors.keep(self.source(c), notes).unwrap_or_default();
+                }
+                "Notes" => {
+                    errors.keep::<()>(self.source(c), Err(invalid("a Slide has one <Notes>")));
+                }
+                _ => {}
+            }
+        }
+        errors.finish()?;
+        if show.animations.len() > 200 {
+            return Err(invalid("a Slide has at most 200 animations"));
+        }
         Ok(Slide {
             id,
             background,
             nodes,
+            show,
         })
     }
     fn nodes(
@@ -499,6 +562,10 @@ impl<'a> Context<'a> {
         let mut errors = Errors::default();
         let mut nodes = Vec::new();
         for n in parent.children().filter(|n| n.is_element()) {
+            // Slide-show children belong to the Slide itself.
+            if depth == 0 && ["Animate", "Notes"].contains(&n.tag_name().name()) {
+                continue;
+            }
             let node = self.node(n, prefix, params, depth);
             nodes.extend(errors.keep(self.source(n), node));
         }

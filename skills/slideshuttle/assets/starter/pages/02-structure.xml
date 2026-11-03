@@ -1,4 +1,4 @@
-<Slide id="structure" background="#F4F1E9">
+<Slide id="structure" type="content" background="#F4F1E9">
   <Box id="frame" class="frame">
     <Text id="kicker" class="kicker">01 / CONTENT BECOMES AN ARGUMENT</Text>
     <Text id="title" class="heading">先决定讲什么，再决定怎么摆。</Text>

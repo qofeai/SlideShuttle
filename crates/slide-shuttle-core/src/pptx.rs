@@ -240,12 +240,25 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
         media: Media::new(),
         charts: 0,
     };
+    // Layouts: the blank one, then one per page type in use.
+    let mut layouts = vec![None];
+    for page in &scene.pages {
+        if !layouts.contains(&page.show.page_type) {
+            layouts.push(page.show.page_type);
+        }
+    }
+    let mut notes = false;
     for (index, page) in scene.pages.iter().enumerate() {
         let n = index + 1;
+        let layout = layouts
+            .iter()
+            .position(|l| *l == page.show.page_type)
+            .unwrap_or(0)
+            + 1;
         let mut rels = vec![(
             "rLayout".into(),
             format!("{R}/slideLayout"),
-            "../slideLayouts/slideLayout1.xml".into(),
+            format!("../slideLayouts/slideLayout{layout}.xml"),
         )];
         let background = match &page.background.kind {
             Draw::Image { src, fit, .. } => {
@@ -259,10 +272,26 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
         };
         let mut id = 2u32;
         let mut body = String::new();
+        // Element id -> (shape id, whether PowerPoint lists it as a built p:sp), for animations.
+        let mut shapes = BTreeMap::new();
+        let mut shape = |item: &Item, first: u32, next: u32| {
+            if next > first {
+                let sp = !matches!(
+                    item.kind,
+                    Draw::Image { .. } | Draw::Table { .. } | Draw::Chart { .. } | Draw::Group
+                );
+                let id = item.id.strip_suffix("::background").unwrap_or(&item.id);
+                shapes
+                    .entry(id.to_owned())
+                    .or_insert_with(Vec::new)
+                    .push((first, sp));
+            }
+        };
         for item in page.items.iter().filter(|i| i.group.is_none()) {
             if matches!(item.kind, Draw::Group) {
                 let gid = id;
                 id += 1;
+                shape(item, gid, id);
                 let r = item.rect;
                 body.push_str(&format!("<p:grpSp><p:nvGrpSpPr><p:cNvPr id=\"{gid}\" name=\"d:{}\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm>{}<a:chOff x=\"{}\" y=\"{}\"/><a:chExt cx=\"{}\" cy=\"{}\"/></a:xfrm></p:grpSpPr>",xml(&item.id),off_ext(r),emu(r.x),emu(r.y),emu(r.width),emu(r.height)));
                 if item.fill.3 > 0 || item.stroke_width > 0.0 {
@@ -276,6 +305,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                     .iter()
                     .filter(|i| i.group.as_deref() == Some(&item.id))
                 {
+                    let first = id;
                     body.push_str(&write_item(
                         child,
                         &mut id,
@@ -283,9 +313,11 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                         &mut rels,
                         &mut shared,
                     )?);
+                    shape(child, first, id);
                 }
                 body.push_str("</p:grpSp>");
             } else {
+                let first = id;
                 body.push_str(&write_item(
                     item,
                     &mut id,
@@ -293,10 +325,42 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                     &mut rels,
                     &mut shared,
                 )?);
+                shape(item, first, id);
             }
         }
+        let show = &page.show;
+        let timing = crate::show::timing(show, &shapes, (scene.width, scene.height))?;
+        let transition = crate::show::transition_xml(show.transition.as_ref());
+        if !show.notes.is_empty() {
+            notes = true;
+            pkg.text(
+                &format!("ppt/notesSlides/notesSlide{n}.xml"),
+                crate::show::notes_xml(&show.notes, P, A, R),
+                &format!("{PRES}notesSlide+xml"),
+            );
+            pkg.relationships(
+                &format!("ppt/notesSlides/_rels/notesSlide{n}.xml.rels"),
+                &[
+                    (
+                        "rMaster".into(),
+                        format!("{R}/notesMaster"),
+                        "../notesMasters/notesMaster1.xml".into(),
+                    ),
+                    (
+                        "rSlide".into(),
+                        format!("{R}/slide"),
+                        format!("../slides/slide{n}.xml"),
+                    ),
+                ],
+            );
+            rels.push((
+                "rNotes".into(),
+                format!("{R}/notesSlide"),
+                format!("../notesSlides/notesSlide{n}.xml"),
+            ));
+        }
         let slide = format!(
-            "<p:sld xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:cSld name=\"{}\"><p:bg><p:bgPr>{}<a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{body}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>",
+            "<p:sld xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:cSld name=\"{}\"><p:bg><p:bgPr>{}<a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{body}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>{transition}{timing}</p:sld>",
             xml(&page.id),
             background
         );
@@ -313,7 +377,17 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
         ));
         slides.push_str(&format!("<p:sldId id=\"{}\" r:id=\"rSlide{n}\"/>", 255 + n));
     }
-    pkg.text("ppt/presentation.xml",format!("<p:presentation xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rMaster\"/></p:sldMasterIdLst><p:sldIdLst>{slides}</p:sldIdLst><p:sldSz cx=\"{}\" cy=\"{}\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/></p:presentation>",emu(scene.width),emu(scene.height)),&format!("{PRES}presentation.main+xml"));
+    let notes_list = if notes {
+        pres_rels.push((
+            "rNotesMaster".into(),
+            format!("{R}/notesMaster"),
+            "notesMasters/notesMaster1.xml".into(),
+        ));
+        "<p:notesMasterIdLst><p:notesMasterId r:id=\"rNotesMaster\"/></p:notesMasterIdLst>"
+    } else {
+        ""
+    };
+    pkg.text("ppt/presentation.xml",format!("<p:presentation xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rMaster\"/></p:sldMasterIdLst>{notes_list}<p:sldIdLst>{slides}</p:sldIdLst><p:sldSz cx=\"{}\" cy=\"{}\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/></p:presentation>",emu(scene.width),emu(scene.height)),&format!("{PRES}presentation.main+xml"));
     pkg.relationships("ppt/_rels/presentation.xml.rels", &pres_rels);
     pkg.relationships("_rels/.rels",&[("rOffice".into(),format!("{R}/officeDocument"),"ppt/presentation.xml".into()),("rCore".into(),"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties".into(),"docProps/core.xml".into()),("rCustom".into(),format!("{R}/custom-properties"),"docProps/custom.xml".into())]);
     pkg.text("docProps/core.xml",format!("<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title><dc:creator>SlideShuttle</dc:creator></cp:coreProperties>",xml(&scene.title)),"application/vnd.openxmlformats-package.core-properties+xml");
@@ -325,7 +399,10 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
         .next()
         .map(|i| i.text_style.family.as_str())
         .unwrap_or("Noto Sans CJK SC");
-    skeleton(&mut pkg, family);
+    skeleton(&mut pkg, family, &layouts);
+    if notes {
+        notes_master(&mut pkg);
+    }
     pkg.finish()
 }
 
@@ -848,34 +925,54 @@ fn custom_geometry(frame: Rect, paths: &[(&[Command], bool, bool)]) -> String {
     )
 }
 
-fn skeleton(pkg: &mut Package, family: &str) {
+/// PowerPoint's layout type and name for a page type.
+pub(crate) fn layout_type(kind: Option<PageType>) -> (&'static str, &'static str) {
+    match kind {
+        None => ("blank", "Blank"),
+        Some(PageType::Cover) => ("title", "Title Slide"),
+        Some(PageType::Contents) => ("cust", "Contents"),
+        Some(PageType::Section) => ("secHead", "Section Header"),
+        Some(PageType::Content) => ("obj", "Title and Content"),
+        Some(PageType::End) => ("cust", "End"),
+    }
+}
+fn skeleton(pkg: &mut Package, family: &str, layouts: &[Option<PageType>]) {
     let family = xml(family);
     let tree = "<p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree>";
-    pkg.text("ppt/slideMasters/slideMaster1.xml",format!("<p:sldMaster xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:cSld>{tree}</p:cSld><p:clrMap accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" bg1=\"lt1\" bg2=\"lt2\" folHlink=\"folHlink\" hlink=\"hlink\" tx1=\"dk1\" tx2=\"dk2\"/><p:sldLayoutIdLst><p:sldLayoutId id=\"2147483649\" r:id=\"rLayout\"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>"),&format!("{PRES}slideMaster+xml"));
-    pkg.relationships(
-        "ppt/slideMasters/_rels/slideMaster1.xml.rels",
-        &[
-            (
-                "rLayout".into(),
-                format!("{R}/slideLayout"),
-                "../slideLayouts/slideLayout1.xml".into(),
-            ),
-            (
-                "rTheme".into(),
-                format!("{R}/theme"),
-                "../theme/theme1.xml".into(),
-            ),
-        ],
-    );
-    pkg.text("ppt/slideLayouts/slideLayout1.xml",format!("<p:sldLayout xmlns:p=\"{P}\" xmlns:a=\"{A}\" type=\"blank\" preserve=\"1\"><p:cSld name=\"Blank\">{tree}</p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>"),&format!("{PRES}slideLayout+xml"));
-    pkg.relationships(
-        "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
-        &[(
-            "rMaster".into(),
-            format!("{R}/slideMaster"),
-            "../slideMasters/slideMaster1.xml".into(),
-        )],
-    );
+    let ids = (0..layouts.len())
+        .map(|i| {
+            format!(
+                "<p:sldLayoutId id=\"{}\" r:id=\"rLayout{}\"/>",
+                2147483649 + i,
+                i + 1
+            )
+        })
+        .collect::<String>();
+    pkg.text("ppt/slideMasters/slideMaster1.xml",format!("<p:sldMaster xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:cSld>{tree}</p:cSld><p:clrMap accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" bg1=\"lt1\" bg2=\"lt2\" folHlink=\"folHlink\" hlink=\"hlink\" tx1=\"dk1\" tx2=\"dk2\"/><p:sldLayoutIdLst>{ids}</p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>"),&format!("{PRES}slideMaster+xml"));
+    let mut master_rels = vec![(
+        "rTheme".into(),
+        format!("{R}/theme"),
+        "../theme/theme1.xml".into(),
+    )];
+    for (i, kind) in layouts.iter().enumerate() {
+        let n = i + 1;
+        master_rels.push((
+            format!("rLayout{n}"),
+            format!("{R}/slideLayout"),
+            format!("../slideLayouts/slideLayout{n}.xml"),
+        ));
+        let (kind, name) = layout_type(*kind);
+        pkg.text(&format!("ppt/slideLayouts/slideLayout{n}.xml"),format!("<p:sldLayout xmlns:p=\"{P}\" xmlns:a=\"{A}\" type=\"{kind}\" preserve=\"1\"><p:cSld name=\"{name}\">{tree}</p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>"),&format!("{PRES}slideLayout+xml"));
+        pkg.relationships(
+            &format!("ppt/slideLayouts/_rels/slideLayout{n}.xml.rels"),
+            &[(
+                "rMaster".into(),
+                format!("{R}/slideMaster"),
+                "../slideMasters/slideMaster1.xml".into(),
+            )],
+        );
+    }
+    pkg.relationships("ppt/slideMasters/_rels/slideMaster1.xml.rels", &master_rels);
     let mut colors = String::new();
     for (name, c) in [
         ("dk1", "111827"),
@@ -897,5 +994,24 @@ fn skeleton(pkg: &mut Package, family: &str) {
     let fills = fill.repeat(3);
     let lines = format!("<a:ln w=\"9525\">{fill}<a:prstDash val=\"solid\"/></a:ln>").repeat(3);
     let effects = "<a:effectStyle><a:effectLst/></a:effectStyle>".repeat(3);
-    pkg.text("ppt/theme/theme1.xml",format!("<a:theme xmlns:a=\"{A}\" name=\"Deck\"><a:themeElements><a:clrScheme name=\"Deck\">{colors}</a:clrScheme><a:fontScheme name=\"Deck\"><a:majorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme><a:fmtScheme name=\"Deck\"><a:fillStyleLst>{fills}</a:fillStyleLst><a:lnStyleLst>{lines}</a:lnStyleLst><a:effectStyleLst>{effects}</a:effectStyleLst><a:bgFillStyleLst>{fills}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"),"application/vnd.openxmlformats-officedocument.theme+xml");
+    let theme = format!(
+        "<a:theme xmlns:a=\"{A}\" name=\"Deck\"><a:themeElements><a:clrScheme name=\"Deck\">{colors}</a:clrScheme><a:fontScheme name=\"Deck\"><a:majorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme><a:fmtScheme name=\"Deck\"><a:fillStyleLst>{fills}</a:fillStyleLst><a:lnStyleLst>{lines}</a:lnStyleLst><a:effectStyleLst>{effects}</a:effectStyleLst><a:bgFillStyleLst>{fills}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"
+    );
+    pkg.text("ppt/theme/theme1.xml", theme, THEME);
+}
+const THEME: &str = "application/vnd.openxmlformats-officedocument.theme+xml";
+/// The notes master every notes page derives from: slide image above, notes text below.
+fn notes_master(pkg: &mut Package) {
+    // Its own copy of the deck theme, as Office expects.
+    let theme = pkg.entries["ppt/theme/theme1.xml"].clone();
+    pkg.bytes("ppt/theme/theme2.xml", theme, THEME);
+    pkg.text("ppt/notesMasters/notesMaster1.xml", format!("<p:notesMaster xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id=\"2\" name=\"Slide Image\"/><p:cNvSpPr><a:spLocks noGrp=\"1\" noRot=\"1\" noChangeAspect=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"sldImg\" idx=\"2\"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"381000\" y=\"685800\"/><a:ext cx=\"6096000\" cy=\"3429000\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr></p:sp><p:sp><p:nvSpPr><p:cNvPr id=\"3\" name=\"Notes\"/><p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"body\" sz=\"quarter\" idx=\"1\"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"685800\" y=\"4343400\"/><a:ext cx=\"5486400\" cy=\"4114800\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang=\"zh-CN\"/></a:p></p:txBody></p:sp></p:spTree></p:cSld><p:clrMap bg1=\"lt1\" tx1=\"dk1\" bg2=\"lt2\" tx2=\"dk2\" accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" hlink=\"hlink\" folHlink=\"folHlink\"/><p:notesStyle><a:lvl1pPr><a:defRPr sz=\"1200\"/></a:lvl1pPr></p:notesStyle></p:notesMaster>"), &format!("{PRES}notesMaster+xml"));
+    pkg.relationships(
+        "ppt/notesMasters/_rels/notesMaster1.xml.rels",
+        &[(
+            "rTheme".into(),
+            format!("{R}/theme"),
+            "../theme/theme2.xml".into(),
+        )],
+    );
 }

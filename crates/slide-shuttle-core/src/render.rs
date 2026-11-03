@@ -455,6 +455,18 @@ pub fn render_png(
     resources: &Resources,
     scale: f32,
 ) -> Result<Vec<u8>> {
+    render_png_step(scene, page, resources, scale, &BTreeMap::new())
+}
+
+/// The page at one slide-show step: `looks` (from [`crate::show::steps`]) hide, fade,
+/// recolor, scale or move animated elements and every element of an animated Group.
+pub fn render_png_step(
+    scene: &Scene,
+    page: usize,
+    resources: &Resources,
+    scale: f32,
+    looks: &BTreeMap<String, crate::show::Look>,
+) -> Result<Vec<u8>> {
     ensure(scene)?;
     if !scale.is_finite() || scale <= 0.0 || scale > 4.0 {
         return Err(invalid("render scale must be in (0,4]"));
@@ -474,7 +486,64 @@ pub fn render_png(
         tiny_skia::Pixmap::new(w, h).ok_or_else(|| invalid("cannot allocate render surface"))?;
     let mut faces = Faces::new();
     for item in std::iter::once(&page.background).chain(&page.items) {
-        paint_png(item, &mut pixmap, resources, &mut faces, scale)?;
+        // A Group's look applies to its members; scaling is about the animated object's center.
+        let own = item.id.strip_suffix("::background").unwrap_or(&item.id);
+        let owner = looks
+            .get_key_value(own)
+            .or_else(|| item.group.as_ref().and_then(|g| looks.get_key_value(g)));
+        let Some((owner, look)) = owner else {
+            paint_png(item, &mut pixmap, resources, &mut faces, scale)?;
+            continue;
+        };
+        if look.hidden {
+            continue;
+        }
+        let mut item = item.clone();
+        item.opacity *= look.opacity;
+        if let Some(c) = look.fill
+            && !matches!(
+                item.kind,
+                Draw::Image { .. } | Draw::Table { .. } | Draw::Chart { .. } | Draw::Group
+            )
+        {
+            item.fill = c;
+            item.gradient = None;
+        }
+        if look.scale == 1.0 && look.offset == (0.0, 0.0) {
+            paint_png(&item, &mut pixmap, resources, &mut faces, scale)?;
+            continue;
+        }
+        // The animated object's full box: a Text's painted box when it has one.
+        let painted = format!("{owner}::background");
+        let r = page
+            .items
+            .iter()
+            .find(|i| i.id == painted)
+            .or_else(|| page.items.iter().find(|i| i.id == *owner))
+            .map_or(item.rect, |i| i.rect);
+        let (cx, cy) = (
+            (r.x + r.width / 2.0) * scale,
+            (r.y + r.height / 2.0) * scale,
+        );
+        let mut layer = tiny_skia::Pixmap::new(w, h)
+            .ok_or_else(|| invalid("cannot allocate render surface"))?;
+        paint_png(&item, &mut layer, resources, &mut faces, scale)?;
+        let transform =
+            tiny_skia::Transform::from_translate(look.offset.0 * scale, look.offset.1 * scale)
+                .pre_translate(cx, cy)
+                .pre_scale(look.scale, look.scale)
+                .pre_translate(-cx, -cy);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            layer.as_ref(),
+            &tiny_skia::PixmapPaint {
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            transform,
+            None,
+        );
     }
     pixmap.encode_png().map_err(|e| invalid(e.to_string()))
 }

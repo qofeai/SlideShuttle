@@ -378,7 +378,15 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         .filter(|n| n.is_element())
     {
         let tag = n.tag_name().name();
-        if !["sldMasterIdLst", "sldIdLst", "sldSz", "notesSz"].contains(&tag) {
+        if ![
+            "sldMasterIdLst",
+            "notesMasterIdLst",
+            "sldIdLst",
+            "sldSz",
+            "notesSz",
+        ]
+        .contains(&tag)
+        {
             inventory.insert(
                 format!("ppt/presentation.xml#{tag}"),
                 digest(&serde_json::to_vec(&canonical(n))?),
@@ -494,19 +502,143 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
                 0,
             )?;
         }
-        for feature in ["timing", "transition", "extLst"] {
-            if let Some(n) = child(root, P, feature) {
-                inventory.insert(
-                    format!("{path}#{feature}"),
-                    digest(&serde_json::to_vec(&canonical(n))?),
-                );
-                reader.losses.push(Loss {
-                    page: page.clone(),
-                    object: feature.into(),
-                    reason: format!(
+        // Office 2010+ wraps transitions in AlternateContent; its Fallback is plain OOXML.
+        let transition = child(root, P, "transition").or_else(|| {
+            root.children()
+                .filter(|n| n.tag_name().name() == "AlternateContent")
+                .flat_map(|n| n.children())
+                .filter(|n| n.tag_name().name() == "Fallback")
+                .find_map(|n| child(n, P, "transition"))
+        });
+        let mut show = Problems::new();
+        let mut attrs = String::new();
+        let mut extra = Vec::new();
+        for (feature, node) in [
+            ("timing", child(root, P, "timing")),
+            ("transition", transition),
+            ("extLst", child(root, P, "extLst")),
+        ] {
+            let Some(n) = node else { continue };
+            inventory.insert(
+                format!("{path}#{feature}"),
+                digest(&serde_json::to_vec(&canonical(n))?),
+            );
+            match feature {
+                "transition" => {
+                    if let Some(t) = crate::show::import_transition(n, &mut show) {
+                        attrs.push_str(&format!(" transition=\"{}\"", xml(&t)));
+                    }
+                }
+                "timing" => {
+                    // Each native shape id -> the elements it became, in order.
+                    let joined = reader.nodes.join("");
+                    let emitted = joined
+                        .split(" id=\"")
+                        .skip(1)
+                        .filter_map(|s| s.split('"').next())
+                        .collect::<Vec<_>>();
+                    let mut targets = BTreeMap::new();
+                    // Import ids number objects across the whole deck. Groups are flattened, so
+                    // a group's animation plays on every member.
+                    let objects = reader
+                        .objects
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, o)| o.page == page)
+                        .collect::<Vec<_>>();
+                    let inside = |o: &Object, group: &str| {
+                        let mut parent = o.parent.clone();
+                        while let Some(p) = parent {
+                            if p == group {
+                                return true;
+                            }
+                            parent = objects
+                                .iter()
+                                .find(|(_, x)| x.kind == "grpSp" && x.name == p)
+                                .and_then(|(_, x)| x.parent.clone());
+                        }
+                        false
+                    };
+                    for (_, o) in &objects {
+                        let ids = objects
+                            .iter()
+                            .filter(|(_, x)| {
+                                std::ptr::eq(*x, *o) || o.kind == "grpSp" && inside(x, &o.name)
+                            })
+                            .flat_map(|(i, _)| {
+                                let base = format!("{page}/object-{}", i + 1);
+                                emitted
+                                    .iter()
+                                    .filter(move |id| {
+                                        **id == base || id.starts_with(&format!("{base}/"))
+                                    })
+                                    .map(|id| (*id).to_owned())
+                            })
+                            .collect::<Vec<_>>();
+                        if !ids.is_empty() {
+                            targets.entry(o.native_id.clone()).or_insert(ids);
+                        }
+                    }
+                    let animated_group = n
+                        .descendants()
+                        .filter(|t| t.tag_name().name() == "spTgt")
+                        .filter_map(|t| t.attribute("spid"))
+                        .any(|spid| {
+                            objects
+                                .iter()
+                                .any(|(_, o)| o.kind == "grpSp" && o.native_id == spid)
+                        });
+                    if animated_group {
+                        show.insert("a group's animation plays on each member".into());
+                    }
+                    extra.extend(crate::show::import_timing(
+                        n,
+                        &targets,
+                        (
+                            (width as f64 / EMU_PER_PX) as f32,
+                            (height as f64 / EMU_PER_PX) as f32,
+                        ),
+                        &mut show,
+                    ));
+                }
+                _ => {
+                    show.insert(format!(
                         "{feature} is retained in the inventory but is not reconstructed"
-                    ),
-                });
+                    ));
+                }
+            }
+        }
+        for reason in show {
+            reader.losses.push(Loss {
+                page: page.clone(),
+                object: "slide show".into(),
+                reason,
+            });
+        }
+        if let Some(layout) = related_part(&entries, path, "slideLayout")?
+            && let Some(bytes) = entries.get(&layout)
+        {
+            let doc = parse_xml(bytes)?;
+            let l = doc.root_element();
+            let name = desc(l, P, "cSld").and_then(|c| c.attribute("name"));
+            let kind = match (l.attribute("type"), name) {
+                (Some("title"), _) => Some("cover"),
+                (Some("secHead"), _) => Some("section"),
+                (Some("obj"), _) => Some("content"),
+                (Some("cust") | None, Some("Contents")) => Some("contents"),
+                (Some("cust") | None, Some("End")) => Some("end"),
+                _ => None,
+            };
+            if let Some(k) = kind {
+                attrs.push_str(&format!(" type=\"{k}\""));
+            }
+        }
+        if let Some(notes) = related_part(&entries, path, "notesSlide")?
+            && let Some(bytes) = entries.get(&notes)
+        {
+            let lines = crate::show::import_notes(parse_xml(bytes)?.root_element());
+            if !lines.is_empty() {
+                extra.push(format!("<Notes>{}</Notes>", xml(&lines.join("\n"))));
             }
         }
         let mut problems = Problems::new();
@@ -544,9 +676,10 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         slides.push((
             page.clone(),
             format!(
-                "<Slide id=\"{page}\" background=\"{}\">{}</Slide>",
+                "<Slide id=\"{page}\" background=\"{}\"{attrs}>{}{}</Slide>",
                 xml(&bg),
-                reader.nodes.join("")
+                reader.nodes.join(""),
+                extra.concat()
             ),
         ));
     }
@@ -568,7 +701,6 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         };
         inventory.insert(name.clone(), hash);
         if name.contains("/comments")
-            || name.contains("/notesSlides")
             || name.contains("/diagrams/")
             || name.contains("/activeX/")
             || name.contains("/embeddings/") && !name.ends_with(".xlsx")
