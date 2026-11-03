@@ -33,7 +33,7 @@ Slide 使用全稿唯一、稳定的 ASCII 语义 ID；普通节点只需在本�
 | 填充 | 纯色/RGBA 或两个不透明色标的左右/上下线性渐变 |
 | 复合对象 | 一层 Group；不要嵌套 Group 或设置组级透明度 |
 
-不要使用 React/JS、完整 HTML、CSS 选择器、calc、rem/em、repeat/minmax、box-shadow、滤镜、自动分页等未支持的能力。Span 仅允许字体、字号、字重、斜体、行高、颜色，不承担布局与对齐。Table/Chart/容器没有整体 opacity。新需求先核对语法，再决定用可用构图替代或说明限制。
+不要使用 React/JS、完整 HTML、CSS 选择器、calc、rem/em、repeat/minmax、box-shadow、滤镜、自动分页等未支持的能力。Span 允许字体、字号、字重、斜体、行高、颜色、字间距、下划线/删除线、上下标和高亮，不承担布局与对齐。Table/Chart/容器没有整体 opacity。新需求先核对语法，再决定用可用构图替代或说明限制。
 
 ## 文字测量与列表
 
@@ -47,16 +47,18 @@ slide-shuttle measure --text '中文 mixed text' \
 
 返回 width、height、lineCount、glyphCount。`--nowrap` 禁止软折行。为文字框留出排版余量；测量成功不保证别的 Office 排版器采用相同折行。
 
-不要凭字符数为窄标签和列表符号猜宽度。可复用以下组件，让符号按字体自动占位、正文获取余下空间：
+要点列表直接用原生列表，导出后在 PowerPoint 里仍是可编辑的项目符号/编号：
 
 ```xml
-<Component name="BulletRow">
-  <Box id="row" style="display:flex;align-items:start;gap:12px">
-    <Text id="marker" style="flex-shrink:0;white-space:nowrap">•</Text>
-    <Text id="content" style="flex-grow:1;flex-basis:0;min-width:0">${text}</Text>
-  </Box>
-</Component>
+<Text id="points" style="height:180px;font-size:22px;line-height:34px">
+  <List>
+    <Item>第一条要点</Item>
+    <Item>第二条要点<List type="number"><Item>细分一</Item></List></Item>
+  </List>
+</Text>
 ```
+
+段落间距用 `<P style="margin-top:…">` 或 `List` 的 `margin-top`，不要用空行凑。只有当符号本身是装饰图形、需要单独配色排版时，才拆成 Flex 行。不要凭字符数为窄标签猜宽度，先用 measure。
 
 正常正文保留软换行；明确不能拆开的短标签可用 white-space:nowrap，同时确保可用宽度足够。固定高度要容纳实际行数。不要用隐藏错误、截断正文或把一页变成图片来让编译通过。
 

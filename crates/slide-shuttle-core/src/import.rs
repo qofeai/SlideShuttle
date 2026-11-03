@@ -8,7 +8,7 @@ use crate::{
 use colors::Problems;
 use roxmltree::{Document, Node as X};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
     io::{Cursor, Read},
@@ -155,6 +155,22 @@ fn rel_path(part: &str) -> String {
     let (dir, file) = part.rsplit_once('/').unwrap_or(("", part));
     format!("{dir}/_rels/{file}.rels")
 }
+const HYPERLINK: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+fn hyperlinks(entries: &BTreeMap<String, Vec<u8>>, part: &str) -> Result<BTreeMap<String, String>> {
+    let Some(bytes) = entries.get(&rel_path(part)) else {
+        return Ok(BTreeMap::new());
+    };
+    let doc = parse_xml(bytes)?;
+    Ok(doc
+        .root_element()
+        .children()
+        .filter(|r| {
+            r.attribute("TargetMode") == Some("External") && r.attribute("Type") == Some(HYPERLINK)
+        })
+        .filter_map(|r| Some((r.attribute("Id")?.into(), r.attribute("Target")?.into())))
+        .collect())
+}
 fn rels(entries: &BTreeMap<String, Vec<u8>>, part: &str) -> Result<BTreeMap<String, String>> {
     let Some(bytes) = entries.get(&rel_path(part)) else {
         return Ok(BTreeMap::new());
@@ -296,6 +312,8 @@ impl Transform {
 struct SlidePart<'d, 'i, 'a> {
     page: &'a str,
     rels: &'a BTreeMap<String, String>,
+    /// External hyperlink targets by relationship id.
+    links: &'a BTreeMap<String, String>,
     fallback: &'d [Document<'i>],
     styles: &'a Styles<'d, 'i>,
 }
@@ -410,6 +428,7 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         }
         pages.push(page.clone());
         let r = rels(&entries, path)?;
+        let links = hyperlinks(&entries, path)?;
         let mut fallback_bytes = Vec::new();
         let mut style_parts = vec![path.clone()];
         if let Some(layout) = related_part(&entries, path, "slideLayout")? {
@@ -458,6 +477,7 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
             let part = SlidePart {
                 page: &page,
                 rels: &r,
+                links: &links,
                 fallback: &fallback,
                 styles: &styles,
             };
@@ -541,14 +561,17 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         let doc = parse_xml(data)?;
         for rel in doc.root_element().children().filter(|n| n.is_element()) {
             if rel.attribute("TargetMode") == Some("External") {
-                reader.losses.push(Loss {
-                    page: "package".into(),
-                    object: name.clone(),
-                    reason: format!(
-                        "external relationship not fetched: {}",
-                        rel.attribute("Type").unwrap_or("unknown")
-                    ),
-                });
+                // Hyperlinks are addresses, rebuilt as <A href>; anything else would be fetched.
+                if rel.attribute("Type") != Some(HYPERLINK) {
+                    reader.losses.push(Loss {
+                        page: "package".into(),
+                        object: name.clone(),
+                        reason: format!(
+                            "external relationship not fetched: {}",
+                            rel.attribute("Type").unwrap_or("unknown")
+                        ),
+                    });
+                }
                 inventory.insert(
                     format!("{name}#external:{}", rel.attribute("Id").unwrap_or("")),
                     digest(&serde_json::to_vec(&canonical(rel))?),
@@ -626,6 +649,7 @@ impl Reader<'_> {
             rels,
             fallback,
             styles,
+            ..
         } = *part;
         if depth > 32 {
             return Err(invalid("group nesting exceeds limit"));
@@ -741,7 +765,7 @@ impl Reader<'_> {
                 geometry[2].max(0),
                 geometry[3].max(0)
             );
-            let mut css = style_css(&props);
+            let mut css = style_css(&props, false);
             if let Some(geom) = desc(n, A, "prstGeom")
                 && geom.attribute("prst") == Some("roundRect")
             {
@@ -791,7 +815,11 @@ impl Reader<'_> {
         problems: &mut Problems,
     ) -> Result<String> {
         let SlidePart {
-            page, rels, styles, ..
+            page,
+            rels,
+            links,
+            styles,
+            ..
         } = *part;
         let Target {
             name,
@@ -909,50 +937,150 @@ impl Reader<'_> {
         } else if let Some(body) =
             child(n, P, "txBody").filter(|body| !plain(*body).trim().is_empty())
         {
-            let mut spans = String::new();
-            for (pi, p) in body
-                .children()
-                .filter(|x| x.has_tag_name((A, "p")))
-                .enumerate()
-            {
-                if pi > 0 {
-                    spans.push_str("<br/>");
-                }
+            // (paragraph properties, list level, inline markup) per paragraph.
+            let mut items = Vec::new();
+            for p in body.children().filter(|x| x.has_tag_name((A, "p"))) {
                 let paragraph = styles.text_properties(n, Some(p), None, problems);
-                if pi > 0 && paragraph.get("align") != props.get("align") {
-                    problems.insert(
-                        "mixed paragraph alignments in one text object are not reconstructed"
-                            .into(),
-                    );
-                }
+                let level = child(p, A, "pPr")
+                    .and_then(|p| p.attribute("lvl"))
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(0);
+                let mut spans = String::new();
                 for run in p.children().filter(|x| x.is_element()) {
                     if run.has_tag_name((A, "r")) || run.has_tag_name((A, "fld")) {
                         let value = desc(run, A, "t").and_then(|x| x.text()).unwrap_or("");
                         let mut props = styles.text_properties(n, Some(p), Some(run), problems);
                         props.remove("align");
-                        let style = style_css(&Value::Object(props));
-                        spans.push_str(&format!(
-                            "<Span style=\"{}\">{}</Span>",
-                            xml(&style),
-                            xml(value)
-                        ));
+                        let link = child(run, A, "rPr")
+                            .and_then(|r| child(r, A, "hlinkClick"))
+                            .and_then(|h| h.attribute((R, "id")));
+                        let href = link
+                            .and_then(|id| links.get(id))
+                            .filter(|href| crate::parser::link_target(href).is_ok());
+                        if link.is_some() && href.is_none() {
+                            problems.insert("hyperlink target is not reconstructed".into());
+                        }
+                        if let Some(href) = href {
+                            // Links take the theme link color and underline.
+                            for key in ["color", "underline", "strike"] {
+                                props.remove(key);
+                            }
+                            spans.push_str(&format!(
+                                "<A href=\"{}\" style=\"{}\">{}</A>",
+                                xml(href),
+                                xml(&style_css(&Value::Object(props), true)),
+                                xml(value)
+                            ));
+                        } else {
+                            spans.push_str(&format!(
+                                "<Span style=\"{}\">{}</Span>",
+                                xml(&style_css(&Value::Object(props), true)),
+                                xml(value)
+                            ));
+                        }
                     } else if run.has_tag_name((A, "br")) {
                         spans.push_str("<br/>");
                     }
                 }
+                items.push((paragraph, level, spans));
             }
+            let bullet = |p: &Map<String, Value>| match p.get("bullet").and_then(Value::as_str) {
+                Some("char") => Some(false),
+                Some("number") => Some(true),
+                _ => None,
+            };
+            let spans = if items.len() == 1 && bullet(&items[0].0).is_none() {
+                items.pop().map(|(_, _, spans)| spans).unwrap_or_default()
+            } else {
+                let mut out = String::new();
+                // Open lists, outermost first: whether each is numbered.
+                let mut open: Vec<bool> = Vec::new();
+                for (paragraph, level, spans) in &items {
+                    let mut style = Vec::new();
+                    if paragraph.get("align") != props.get("align")
+                        && let Some(align) = paragraph.get("align").and_then(Value::as_str)
+                    {
+                        style.push(format!("text-align:{}", text_align(align)));
+                    }
+                    if let Some(before) = paragraph
+                        .get("spaceBefore")
+                        .and_then(Value::as_u64)
+                        .filter(|v| *v > 0)
+                    {
+                        style.push(format!("margin-top:{}px", before as f64 / 75.0));
+                    }
+                    let style = if style.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" style=\"{}\"", style.join(";"))
+                    };
+                    let Some(ordered) = bullet(paragraph) else {
+                        for _ in open.drain(..) {
+                            out.push_str("</Item></List>");
+                        }
+                        out.push_str(&format!("<P{style}>{spans}</P>"));
+                        continue;
+                    };
+                    // A level may only go one deeper than the list it nests in.
+                    let level = (*level).min(open.len()).min(4);
+                    while open.len() > level + 1
+                        || open.len() == level + 1 && open.last() != Some(&ordered)
+                    {
+                        open.pop();
+                        out.push_str("</Item></List>");
+                    }
+                    if open.len() == level + 1 {
+                        out.push_str("</Item>");
+                    } else {
+                        let start = paragraph
+                            .get("bulletStart")
+                            .and_then(Value::as_u64)
+                            .filter(|v| ordered && *v > 1)
+                            .map(|v| format!(" start=\"{v}\""))
+                            .unwrap_or_default();
+                        let kind = if ordered { "number" } else { "bullet" };
+                        out.push_str(&format!("<List type=\"{kind}\"{start}>"));
+                        open.push(ordered);
+                    }
+                    let size = paragraph
+                        .get("size")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1800) as f64
+                        / 75.0;
+                    let expected = (level + 1) as f64 * 1.5 * size;
+                    if let Some(margin) = paragraph.get("marL").and_then(Value::as_i64)
+                        && (margin as f64 / 9525.0 - expected).abs() > expected * 0.25
+                    {
+                        problems.insert("list indent is drawn at 1.5em per level".into());
+                    }
+                    out.push_str(&format!("<Item{style}>{spans}"));
+                }
+                for _ in open.drain(..) {
+                    out.push_str("</Item></List>");
+                }
+                out
+            };
             let bodypr = child(body, A, "bodyPr");
             let white_space = if bodypr.is_some_and(|p| p.attribute("wrap") == Some("none")) {
                 ";white-space:nowrap"
             } else {
                 ""
             };
+            let anchor = match styles.anchor(n) {
+                Some("ctr") => ";vertical-align:middle",
+                Some("b") => ";vertical-align:bottom",
+                Some("t") | None => "",
+                Some(other) => {
+                    problems.insert(format!("text anchor {other} is not reconstructed"));
+                    ""
+                }
+            };
             let l = number(bodypr, "lIns", 91440);
             let r = number(bodypr, "rIns", 91440);
             let t = number(bodypr, "tIns", 45720);
             let b = number(bodypr, "bIns", 45720);
             format!(
-                "<Text id=\"{import_id}\" style=\"{pos};{}{white_space};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
+                "<Text id=\"{import_id}\" style=\"{pos};{}{white_space}{anchor};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
                 xml(css)
             )
         } else if let Some(geom) = desc(n, A, "prstGeom") {
@@ -998,7 +1126,9 @@ impl Reader<'_> {
     }
 }
 
-fn style_css(p: &Value) -> String {
+/// Translate resolved OOXML properties to source CSS. Span-only properties (baseline
+/// shift, highlight) are written only for spans: on a Text they mean something else.
+fn style_css(p: &Value, span: bool) -> String {
     let mut css = Vec::new();
     for (k, prop) in [
         ("family", "font-family"),
@@ -1047,6 +1177,36 @@ fn style_css(p: &Value) -> String {
             _ => "left",
         };
         css.push(format!("text-align:{a}"));
+    }
+    let underline = p["underline"].as_bool();
+    let strike = p["strike"].as_bool();
+    if underline.is_some() || strike.is_some() {
+        let lines = [
+            (underline == Some(true)).then_some("underline"),
+            (strike == Some(true)).then_some("line-through"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        css.push(format!(
+            "text-decoration:{}",
+            if lines.is_empty() {
+                "none".into()
+            } else {
+                lines.join(" ")
+            }
+        ));
+    }
+    if let Some(spacing) = p["letterSpacing"].as_i64() {
+        css.push(format!("letter-spacing:{}px", spacing as f64 / 75.0));
+    }
+    if span {
+        if let Some(shift) = p["baseline"].as_str() {
+            css.push(format!("vertical-align:{shift}"));
+        }
+        if let Some(color) = p["highlight"].as_str() {
+            css.push(format!("background-color:#{color}"));
+        }
     }
     css.join(";")
 }
@@ -1196,13 +1356,22 @@ fn chart_source(
     }
     Ok(format!(
         "<Chart id=\"{id}\" type=\"{kind}\" style=\"{pos};{}\"><Labels>{}</Labels>{series}</Chart>",
-        xml(&style_css(&Value::Object(
-            styles.standalone_text(root, problems)
-        ))),
+        xml(&style_css(
+            &Value::Object(styles.standalone_text(root, problems)),
+            false
+        )),
         xml(&labels.join("|"))
     ))
 }
 
 pub fn snapshot_json(snapshot: &Snapshot) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec_pretty(snapshot)?)
+}
+fn text_align(algn: &str) -> &'static str {
+    match algn {
+        "ctr" => "center",
+        "r" => "right",
+        "just" => "justify",
+        _ => "left",
+    }
 }

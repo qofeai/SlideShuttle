@@ -157,15 +157,9 @@ impl Compiler {
         if ![400, 700].contains(&style.weight) {
             return Err(model::invalid("invalid text measurement style"));
         }
-        let shape = self.text.shape(
-            &[Span {
-                text: text.into(),
-                style: Css::new(),
-            }],
-            style,
-            width,
-            wrap,
-        )?;
+        let shape = self
+            .text
+            .shape(&[Paragraph::plain(text)], style, width, wrap)?;
         Ok(TextMeasurement {
             width: shape.width,
             height: shape.height,

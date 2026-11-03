@@ -248,6 +248,102 @@ fn project_errors_name_their_file_and_stay_inside_the_project() {
     );
 }
 #[test]
+fn rich_text_lists_decorations_and_links_round_trip() {
+    let source = doc(
+        r##"<Text id="t" style="width:600px;height:330px;font-size:20px;line-height:30px;vertical-align:middle">
+      <P>Plain <Span style="text-decoration:underline line-through;background-color:#FDE68A">marked</Span> H<Span style="vertical-align:sub">2</Span>O <Span style="letter-spacing:4px">wide</Span> <A href="https://example.com">link</A></P>
+      <List type="number" start="3" style="margin-top:10px"><Item>three
+        <List><Item>nested</Item></List>
+      </Item><Item>four</Item></List>
+    </Text>"##,
+    );
+    let d = parse(&source).unwrap();
+    let Kind::Text { paragraphs } = &d.slides[0].nodes[0].kind else {
+        panic!("expected text")
+    };
+    let markers = paragraphs
+        .iter()
+        .map(|p| p.list.map(|l| (l.ordered, l.level, l.number)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        markers,
+        [
+            None,
+            Some((true, 0, 3)),
+            Some((false, 1, 1)),
+            Some((true, 0, 4))
+        ]
+    );
+    assert_eq!(paragraphs[1].spans[0].text, "three");
+    assert_eq!(paragraphs[1].style["margin-top"], "10px");
+    assert!(!paragraphs[3].style.contains_key("margin-top"));
+    let (_, r, s, pptx) = compile(&source);
+    let Draw::Text { marks, glyphs, .. } = &s.pages[0].items[0].kind else {
+        panic!("expected text")
+    };
+    let count = |kind: &MarkKind| marks.iter().filter(|m| &m.kind == kind).count();
+    assert_eq!(count(&MarkKind::Highlight), 1);
+    assert_eq!(
+        count(&MarkKind::Line),
+        3,
+        "underline + strike, and the link underline"
+    );
+    assert_eq!(count(&MarkKind::Link("https://example.com".into())), 1);
+    let glyph = |text: &str| glyphs.iter().find(|g| g.text == text).unwrap();
+    assert!(glyph("2").y > glyph("H").y && glyph("2").size < glyph("H").size);
+    assert!(
+        glyph("3").x < glyph("t").x,
+        "the number marker hangs left of its item"
+    );
+    let parts = zip_read(&pptx);
+    let slide = String::from_utf8(parts["ppt/slides/slide1.xml"].clone()).unwrap();
+    for native in [
+        r#"<a:buAutoNum type="arabicPeriod" startAt="3"/>"#,
+        "<a:buChar char=\"–\"/>",
+        r#"u="sng" strike="sngStrike""#,
+        r#"baseline="-25000""#,
+        r#"spc="300""#,
+        "<a:highlight>",
+        "<a:hlinkClick r:id=",
+        r#"anchor="ctr""#,
+    ] {
+        assert!(slide.contains(native), "{native}");
+    }
+    assert!(
+        String::from_utf8_lossy(&parts["ppt/slides/_rels/slide1.xml.rels"])
+            .contains(r#"Target="https://example.com" TargetMode="External""#)
+    );
+    let pdf = render::render_pdf(&s, &r).unwrap();
+    assert!(pdf.windows(19).any(|w| w == b"https://example.com"));
+    let imported = import::import_pptx(&pptx).unwrap();
+    assert!(
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r).unwrap();
+    assert_eq!(
+        render::render_png(&again, 0, &r, 1.0).unwrap(),
+        render::render_png(&s, 0, &r, 1.0).unwrap(),
+        "export → import must reproduce the same page"
+    );
+}
+#[test]
+fn rich_text_rejects_mixed_content_and_unsafe_links() {
+    for inner in [
+        r#"<Text id="t">loose <P>p</P></Text>"#,
+        r#"<Text id="t"><P style="color:#F00">p</P></Text>"#,
+        r#"<Text id="t"><A href="javascript:alert(1)">x</A></Text>"#,
+        r##"<Text id="t"><A href="https://x.y" style="color:#000">x</A></Text>"##,
+        r#"<Text id="t"><List type="roman"><Item>x</Item></List></Text>"#,
+        r#"<Text id="t"><List><P>x</P></List></Text>"#,
+    ] {
+        assert!(parse(&doc(inner)).is_err(), "{inner}");
+    }
+    let d = parse(&doc(r#"<Box id="b" style="vertical-align:middle"/>"#)).unwrap();
+    assert!(layout(&d, &resources()).is_err());
+}
+#[test]
 fn declared_font_family_must_be_in_its_file() {
     let mut r = resources();
     r.fonts[0].family = Some("Brand".into());
@@ -330,7 +426,9 @@ fn empty_pptx_text_bodies_preserve_lines_shapes_and_paths() {
         }
     ));
     assert!(matches!(&nodes[2].kind, Kind::Path { .. }));
-    assert!(matches!(&nodes[3].kind, Kind::Text{spans} if spans.iter().all(|s|s.text.is_empty())));
+    assert!(
+        matches!(&nodes[3].kind, Kind::Text{paragraphs} if paragraphs.iter().flat_map(|p| &p.spans).all(|s|s.text.is_empty()))
+    );
     let scene = layout(&deck, &r).unwrap();
     assert!(!scene.has_errors(), "{:?}", scene.diagnostics);
     assert_eq!(

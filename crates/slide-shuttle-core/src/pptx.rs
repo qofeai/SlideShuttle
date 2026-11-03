@@ -40,10 +40,15 @@ impl Package {
             .iter()
             .map(|(id, ty, target)| {
                 format!(
-                    "<Relationship Id=\"{}\" Type=\"{}\" Target=\"{}\"/>",
+                    "<Relationship Id=\"{}\" Type=\"{}\" Target=\"{}\"{}/>",
                     xml(id),
                     xml(ty),
-                    xml(target)
+                    xml(target),
+                    if ty.ends_with("/hyperlink") {
+                        " TargetMode=\"External\""
+                    } else {
+                        ""
+                    }
                 )
             })
             .collect::<String>();
@@ -295,15 +300,23 @@ fn write_item(
     *id += 1;
     Ok(match &item.kind {
         Draw::Text {
-            spans, export_wrap, ..
+            paragraphs: content,
+            export_wrap,
+            anchor,
+            ..
         } => format!(
-            "<p:sp>{}<p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}{}</p:spPr><p:txBody><a:bodyPr wrap=\"{}\" lIns=\"0\" rIns=\"0\" tIns=\"0\" bIns=\"0\" anchor=\"t\"><a:noAutofit/></a:bodyPr><a:lstStyle/>{}</p:txBody></p:sp>",
+            "<p:sp>{}<p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}{}</p:spPr><p:txBody><a:bodyPr wrap=\"{}\" lIns=\"0\" rIns=\"0\" tIns=\"0\" bIns=\"0\" anchor=\"{}\"><a:noAutofit/></a:bodyPr><a:lstStyle/>{}</p:txBody></p:sp>",
             nv(ident, &item.id, true),
             xfrm(item.rect),
             item_fill(item),
             stroke(item),
             if *export_wrap { "square" } else { "none" },
-            paragraphs(spans, &item.text_style, item.opacity)?
+            match anchor {
+                VerticalAlign::Top => "t",
+                VerticalAlign::Middle => "ctr",
+                VerticalAlign::Bottom => "b",
+            },
+            paragraphs(content, &item.text_style, item.opacity, rels)?
         ),
         Draw::Image { src, fit } => {
             let bytes = shared
@@ -418,45 +431,132 @@ fn write_item(
     })
 }
 
-pub(crate) fn paragraphs(spans: &[Span], base: &TextStyle, opacity: f32) -> Result<String> {
-    let mut paragraphs = vec![Vec::<(String, TextStyle)>::new()];
-    for span in spans {
-        let mut ts = crate::text::text_style(&span.style, base)?;
-        ts.color.3 = (ts.color.3 as f32 * opacity).round() as u8;
-        for (i, part) in span.text.split('\n').enumerate() {
-            if i > 0 {
-                paragraphs.push(Vec::new());
-            }
-            if !part.is_empty() {
-                paragraphs
-                    .last_mut()
-                    .unwrap()
-                    .push((part.into(), ts.clone()));
+/// DrawingML paragraphs. Links add external relationships to `rels`.
+pub(crate) fn paragraphs(
+    content: &[Paragraph],
+    base: &TextStyle,
+    opacity: f32,
+    rels: &mut Vec<(String, String, String)>,
+) -> Result<String> {
+    let mut out = String::new();
+    for p in content {
+        let mut style = base.clone();
+        if let Some(align) = p.style.get("text-align") {
+            style.align = keyword(align, "text-align")?;
+        }
+        let algn = match style.align {
+            Align::Left => "l",
+            Align::Center => "ctr",
+            Align::Right => "r",
+            Align::Justify => "just",
+        };
+        let before = p
+            .style
+            .get("margin-top")
+            .map(|v| length_px(v))
+            .transpose()?
+            .unwrap_or(0.0);
+        let mut runs = String::new();
+        let mut first_run = None;
+        for span in &p.spans {
+            let mut ts = crate::text::text_style(&span.style, &style)?;
+            ts.color.3 = (ts.color.3 as f32 * opacity).round() as u8;
+            first_run.get_or_insert_with(|| ts.clone());
+            let link = span.href.as_ref().map(|href| {
+                let id = format!("rLink{}", rels.len());
+                rels.push((id.clone(), format!("{R}/hyperlink"), href.clone()));
+                id
+            });
+            for (i, part) in span.text.split('\n').enumerate() {
+                if i > 0 {
+                    runs.push_str("<a:br/>");
+                }
+                if !part.is_empty() {
+                    runs.push_str(&format!(
+                        "<a:r>{}<a:t xml:space=\"preserve\">{}</a:t></a:r>",
+                        run_props(&ts, &span.style, link.as_deref())?,
+                        xml(part)
+                    ));
+                }
             }
         }
+        let first = first_run.unwrap_or_else(|| style.clone());
+        let step = 1.5 * first.size;
+        let (list_attrs, bullet) = match p.list {
+            Some(list) => (
+                format!(
+                    " marL=\"{}\" indent=\"{}\" lvl=\"{}\"",
+                    emu(f32::from(list.level + 1) * step),
+                    -emu(step),
+                    list.level
+                ),
+                if list.ordered {
+                    format!(
+                        "<a:buFont typeface=\"{0}\"/><a:buAutoNum type=\"arabicPeriod\" startAt=\"{1}\"/>",
+                        xml(&first.family),
+                        list.number
+                    )
+                } else {
+                    format!(
+                        "<a:buFont typeface=\"{}\"/><a:buChar char=\"{}\"/>",
+                        xml(&first.family),
+                        if list.level % 2 == 0 { "•" } else { "–" }
+                    )
+                },
+            ),
+            None => (" marL=\"0\" indent=\"0\"".into(), "<a:buNone/>".into()),
+        };
+        out.push_str(&format!(
+            "<a:p><a:pPr{list_attrs} algn=\"{algn}\"><a:lnSpc><a:spcPts val=\"{}\"/></a:lnSpc><a:spcBef><a:spcPts val=\"{}\"/></a:spcBef><a:spcAft><a:spcPts val=\"0\"/></a:spcAft>{bullet}</a:pPr>{runs}<a:endParaRPr lang=\"zh-CN\" sz=\"{}\"/></a:p>",
+            (style.line_height * 75.0).round() as u32,
+            (before * 75.0).round() as u32,
+            (first.size * 75.0).round() as u32
+        ));
     }
-    let align = match base.align {
-        Align::Left => "l",
-        Align::Center => "ctr",
-        Align::Right => "r",
-        Align::Justify => "just",
-    };
-    Ok(paragraphs.iter().map(|runs|{
-        let body=runs.iter().map(|(text,s)|format!("<a:r>{}<a:t xml:space=\"preserve\">{}</a:t></a:r>",run_props(s),xml(text))).collect::<String>();
-        format!("<a:p><a:pPr algn=\"{align}\"><a:lnSpc><a:spcPts val=\"{}\"/></a:lnSpc><a:spcBef><a:spcPts val=\"0\"/></a:spcBef><a:spcAft><a:spcPts val=\"0\"/></a:spcAft></a:pPr>{body}<a:endParaRPr lang=\"zh-CN\" sz=\"{}\"/></a:p>",(base.line_height*75.0).round()as u32,(base.size*75.0).round()as u32)
-    }).collect())
+    Ok(out)
 }
-fn run_props(s: &TextStyle) -> String {
-    format!(
-        "<a:rPr lang=\"zh-CN\" sz=\"{}\" b=\"{}\" i=\"{}\">{}<a:latin typeface=\"{}\"/><a:ea typeface=\"{}\"/><a:cs typeface=\"{}\"/></a:rPr>",
+fn run_props(s: &TextStyle, css: &Css, link: Option<&str>) -> Result<String> {
+    let mut attrs = format!(
+        " lang=\"zh-CN\" sz=\"{}\" b=\"{}\" i=\"{}\"",
         (s.size * 75.0).round() as u32,
         u8::from(s.weight >= 700),
-        u8::from(s.italic),
+        u8::from(s.italic)
+    );
+    if s.underline {
+        attrs.push_str(" u=\"sng\"");
+    }
+    if s.strike {
+        attrs.push_str(" strike=\"sngStrike\"");
+    }
+    if s.letter_spacing != 0.0 {
+        attrs.push_str(&format!(
+            " spc=\"{}\"",
+            (s.letter_spacing * 75.0).round() as i32
+        ));
+    }
+    match css.get("vertical-align").map(String::as_str) {
+        Some("super") => attrs.push_str(" baseline=\"30000\""),
+        Some("sub") => attrs.push_str(" baseline=\"-25000\""),
+        _ => {}
+    }
+    let highlight = css
+        .get("background")
+        .map(|v| Color::parse(v))
+        .transpose()?
+        .map(|c| {
+            format!(
+                "<a:highlight><a:srgbClr val=\"{}\"/></a:highlight>",
+                c.hex()
+            )
+        })
+        .unwrap_or_default();
+    let family = xml(&s.family);
+    Ok(format!(
+        "<a:rPr{attrs}>{}{highlight}<a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"{family}\"/>{}</a:rPr>",
         fill(s.color, 1.0),
-        xml(&s.family),
-        xml(&s.family),
-        xml(&s.family)
-    )
+        link.map(|id| format!("<a:hlinkClick r:id=\"{id}\"/>"))
+            .unwrap_or_default()
+    ))
 }
 fn table(item: &Item, id: u32, rows: &[Vec<String>], columns: &[f32]) -> Result<String> {
     let sum: f32 = columns.iter().sum();
@@ -471,7 +571,7 @@ fn table(item: &Item, id: u32, rows: &[Vec<String>], columns: &[f32]) -> Result<
             emu(item.rect.height / rows.len() as f32)
         ));
         for value in row {
-            body.push_str(&format!("<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>{}</a:txBody><a:tcPr marL=\"76200\" marR=\"76200\" marT=\"57150\" marB=\"57150\">",paragraphs(&[Span{text:value.clone(),style:Css::new()}],&item.text_style,1.0)?));
+            body.push_str(&format!("<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>{}</a:txBody><a:tcPr marL=\"76200\" marR=\"76200\" marT=\"57150\" marB=\"57150\">",paragraphs(&[Paragraph::plain(value.clone())],&item.text_style,1.0,&mut Vec::new())?));
             for side in ["lnL", "lnR", "lnT", "lnB"] {
                 body.push_str(&format!("<a:{side} w=\"9525\"><a:solidFill><a:srgbClr val=\"D2D9E3\"/></a:solidFill></a:{side}>"));
             }

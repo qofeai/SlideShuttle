@@ -1,16 +1,45 @@
 use crate::model::*;
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Weight, Wrap};
+use cosmic_text::{
+    Attrs, Buffer, Family, FontSystem, Metrics, Shaping, UnderlineStyle, Weight, Wrap,
+};
 use std::collections::BTreeMap;
 
 pub(crate) struct TextEngine {
     pub system: FontSystem,
     faces: BTreeMap<cosmic_text::fontdb::ID, (usize, u32)>,
 }
+#[derive(Default)]
 pub(crate) struct Shaped {
     pub width: f32,
     pub height: f32,
     pub lines: usize,
     pub glyphs: Vec<PositionedGlyph>,
+    pub marks: Vec<TextMark>,
+    /// Baseline of the first line; aligns list markers.
+    pub first_baseline: f32,
+}
+impl Shaped {
+    pub fn offset(&mut self, dx: f32, dy: f32) {
+        for g in &mut self.glyphs {
+            g.x += dx;
+            g.y += dy;
+        }
+        for m in &mut self.marks {
+            m.rect.x += dx;
+            m.rect.y += dy;
+        }
+    }
+}
+/// Hanging indent per list level, as a multiple of the font size.
+const LIST_STEP: f32 = 1.5;
+/// Superscript/subscript glyphs are this fraction of the span's font size.
+const SCRIPT_SCALE: f32 = 0.65;
+fn marker(list: ListMarker) -> String {
+    if list.ordered {
+        format!("{}.", list.number)
+    } else {
+        ["•", "–"][usize::from(list.level % 2)].into()
+    }
 }
 impl TextEngine {
     pub fn new(resources: &Resources) -> Result<Self> {
@@ -58,9 +87,11 @@ impl TextEngine {
             faces: keys,
         })
     }
+    /// Shape paragraphs into one block: list items get a hanging indent and a marker,
+    /// `margin-top` adds space before a paragraph and `text-align` overrides per paragraph.
     pub fn shape(
         &mut self,
-        spans: &[Span],
+        paragraphs: &[Paragraph],
         base: &TextStyle,
         width: Option<f32>,
         wrap: bool,
@@ -68,30 +99,130 @@ impl TextEngine {
         if base.size <= 0.0 || base.line_height <= 0.0 {
             return Err(invalid("font size and line height must be positive"));
         }
-        let styles = spans
-            .iter()
-            .map(|s| text_style(&s.style, base))
-            .collect::<Result<Vec<_>>>()?;
         // An empty object has no line box. Explicit whitespace/newlines remain
         // measurable content, so they still reserve authored line spacing.
-        if spans.iter().all(|span| span.text.is_empty()) {
-            return Ok(Shaped {
-                width: 0.0,
-                height: 0.0,
-                lines: 0,
-                glyphs: Vec::new(),
-            });
+        if paragraphs
+            .iter()
+            .all(|p| p.list.is_none() && p.spans.iter().all(|span| span.text.is_empty()))
+        {
+            return Ok(Shaped::default());
         }
-        for style in &styles {
-            if !self.has_face(style) {
+        let mut out = Shaped::default();
+        let mut y = 0.0;
+        for (i, p) in paragraphs.iter().enumerate() {
+            let mut style = base.clone();
+            if let Some(align) = p.style.get("text-align") {
+                style.align = keyword(align, "text-align")?;
+            }
+            if let Some(margin) = p.style.get("margin-top") {
+                let margin = length_px(margin)?;
+                if !(0.0..=4096.0).contains(&margin) {
+                    return Err(invalid("paragraph margin-top must be in [0, 4096]px"));
+                }
+                y += margin;
+            }
+            // Markers and indents follow the item's own text, its first span.
+            let first = match p.spans.first() {
+                Some(span) => text_style(&span.style, &style)?,
+                None => style.clone(),
+            };
+            let step = LIST_STEP * first.size;
+            let indent = p.list.map_or(0.0, |l| f32::from(l.level + 1) * step);
+            let mut part = self.shape_spans(
+                &p.spans,
+                &style,
+                width.map(|w| (w - indent).max(0.01)),
+                wrap,
+            )?;
+            if part.lines == 0 {
+                // An empty paragraph among others still occupies its line.
+                part.height = style.line_height;
+                part.lines = 1;
+                part.first_baseline = style.line_height * 0.8;
+            }
+            if let Some(list) = p.list {
+                let marker_style = TextStyle {
+                    align: Align::Left,
+                    underline: false,
+                    strike: false,
+                    ..first
+                };
+                let marker = Paragraph::plain(marker(list)).spans;
+                let mut mark = self.shape_spans(&marker, &marker_style, None, false)?;
+                mark.offset(indent - step, y + part.first_baseline - mark.first_baseline);
+                out.glyphs.append(&mut mark.glyphs);
+            }
+            if i == 0 {
+                out.first_baseline = y + part.first_baseline;
+            }
+            part.offset(indent, y);
+            out.width = out.width.max(indent + part.width);
+            out.lines += part.lines;
+            out.glyphs.append(&mut part.glyphs);
+            out.marks.append(&mut part.marks);
+            y += part.height;
+        }
+        out.height = y;
+        Ok(out)
+    }
+    fn shape_spans(
+        &mut self,
+        spans: &[Span],
+        base: &TextStyle,
+        width: Option<f32>,
+        wrap: bool,
+    ) -> Result<Shaped> {
+        if spans.iter().all(|span| span.text.is_empty()) {
+            return Ok(Shaped::default());
+        }
+        struct Look {
+            style: TextStyle,
+            /// Baseline shift as a multiple of the span's font size.
+            shift: f32,
+            highlight: Option<Color>,
+        }
+        let looks = spans
+            .iter()
+            .map(|span| {
+                let style = text_style(&span.style, base)?;
+                let shift = match span.style.get("vertical-align").map(String::as_str) {
+                    None | Some("baseline") => 0.0,
+                    Some("super") => -0.35,
+                    Some("sub") => 0.15,
+                    Some(other) => {
+                        return Err(invalid(format!(
+                            "Span vertical-align is baseline, super or sub, not {other}"
+                        )));
+                    }
+                };
+                let highlight = span
+                    .style
+                    .get("background")
+                    .map(|v| Color::parse(v))
+                    .transpose()?;
+                Ok(Look {
+                    style,
+                    shift,
+                    highlight,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for look in &looks {
+            if !self.has_face(&look.style) {
                 return Err(invalid(format!(
                     "font face not supplied: {} weight={} italic={}",
-                    style.family, style.weight, style.italic
+                    look.style.family, look.style.weight, look.style.italic
                 )));
             }
         }
-        fn attr(s: &TextStyle) -> Attrs<'_> {
-            Attrs::new()
+        fn attr(look: &Look, index: usize) -> Attrs<'_> {
+            let s = &look.style;
+            let size = if look.shift == 0.0 {
+                s.size
+            } else {
+                s.size * SCRIPT_SCALE
+            };
+            let mut attrs = Attrs::new()
                 .family(Family::Name(&s.family))
                 .weight(Weight(s.weight))
                 .style(if s.italic {
@@ -102,13 +233,30 @@ impl TextEngine {
                 .color(cosmic_text::Color::rgba(
                     s.color.0, s.color.1, s.color.2, s.color.3,
                 ))
-                .metrics(Metrics::new(s.size, s.line_height))
+                .metrics(Metrics::new(size, s.line_height))
+                .metadata(index);
+            if s.letter_spacing != 0.0 {
+                attrs = attrs.letter_spacing(s.letter_spacing / size);
+            }
+            if s.underline {
+                attrs = attrs.underline(UnderlineStyle::Single);
+            }
+            if s.strike {
+                attrs = attrs.strikethrough();
+            }
+            attrs
         }
-        let default = attr(base);
+        let base_look = Look {
+            style: base.clone(),
+            shift: 0.0,
+            highlight: None,
+        };
+        let default = attr(&base_look, usize::MAX);
         let rich = spans
             .iter()
-            .zip(styles.iter())
-            .map(|(span, style)| (span.text.as_str(), attr(style)))
+            .zip(looks.iter())
+            .enumerate()
+            .map(|(i, (span, look))| (span.text.as_str(), attr(look, i)))
             .collect::<Vec<_>>();
         let mut buffer = Buffer::new(&mut self.system, Metrics::new(base.size, base.line_height));
         buffer.set_size(width.map(|v| v.max(0.01)), None);
@@ -121,12 +269,83 @@ impl TextEngine {
         };
         buffer.set_rich_text(rich, &default, Shaping::Advanced, Some(align));
         buffer.shape_until_scroll(&mut self.system, false);
-        let (mut w, mut h, mut lines) = (0.0f32, 0.0f32, 0);
-        let mut glyphs = Vec::new();
+        let mut out = Shaped::default();
         for run in buffer.layout_runs() {
-            lines += 1;
-            w = w.max(run.line_w);
-            h = h.max(run.line_top + run.line_height);
+            if out.lines == 0 {
+                out.first_baseline = run.line_y;
+            }
+            out.lines += 1;
+            out.width = out.width.max(run.line_w);
+            out.height = out.height.max(run.line_top + run.line_height);
+            // Highlights and link areas cover consecutive glyphs of one span.
+            let mut start = 0;
+            while start < run.glyphs.len() {
+                let span = run.glyphs[start].metadata;
+                let end = run.glyphs[start..]
+                    .iter()
+                    .position(|g| g.metadata != span)
+                    .map_or(run.glyphs.len(), |n| start + n);
+                let (x0, x1) = run.glyphs[start..end]
+                    .iter()
+                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), g| {
+                        (a.min(g.x), b.max(g.x + g.w))
+                    });
+                let rect = Rect {
+                    x: x0,
+                    y: run.line_top,
+                    width: (x1 - x0).max(0.0),
+                    height: run.line_height,
+                };
+                if let Some(color) = looks.get(span).and_then(|l| l.highlight) {
+                    out.marks.push(TextMark {
+                        rect,
+                        color,
+                        kind: MarkKind::Highlight,
+                    });
+                }
+                if let Some(href) = spans.get(span).and_then(|s| s.href.clone()) {
+                    out.marks.push(TextMark {
+                        rect,
+                        color: Color(0, 0, 0, 0),
+                        kind: MarkKind::Link(href),
+                    });
+                }
+                start = end;
+            }
+            for deco in run.decorations {
+                let glyphs = &run.glyphs[deco.glyph_range.clone()];
+                let Some(first) = glyphs.first() else {
+                    continue;
+                };
+                let (x0, x1) = glyphs
+                    .iter()
+                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), g| {
+                        (a.min(g.x), b.max(g.x + g.w))
+                    });
+                let c = first.color_opt.or(default.color_opt).unwrap();
+                let color = Color(c.r(), c.g(), c.b(), c.a());
+                let td = &deco.data.text_decoration;
+                for (on, metrics) in [
+                    (
+                        td.underline != UnderlineStyle::None,
+                        deco.data.underline_metrics,
+                    ),
+                    (td.strikethrough, deco.data.strikethrough_metrics),
+                ] {
+                    if on {
+                        out.marks.push(TextMark {
+                            rect: Rect {
+                                x: x0,
+                                y: run.line_y - metrics.offset * deco.font_size,
+                                width: (x1 - x0).max(0.0),
+                                height: (metrics.thickness * deco.font_size).max(1.0),
+                            },
+                            color,
+                            kind: MarkKind::Line,
+                        });
+                    }
+                }
+            }
             for g in run.glyphs {
                 let (font, index) = self
                     .faces
@@ -137,30 +356,28 @@ impl TextEngine {
                 if g.glyph_id == 0 && !text.chars().all(char::is_whitespace) {
                     return Err(invalid(format!("font has no glyph for {text:?}")));
                 }
-                glyphs.push(PositionedGlyph {
+                let shift = looks
+                    .get(g.metadata)
+                    .map_or(0.0, |l| l.shift * l.style.size);
+                out.glyphs.push(PositionedGlyph {
                     font: *font,
                     font_index: *index,
                     glyph_id: g.glyph_id,
                     size: g.font_size,
                     weight: g.font_weight.0,
                     x: g.x + g.x_offset * g.font_size,
-                    y: run.line_y + g.y - g.y_offset * g.font_size,
+                    y: run.line_y + g.y - g.y_offset * g.font_size + shift,
                     advance: g.w,
                     text,
                     color: Color(c.r(), c.g(), c.b(), c.a()),
                 });
             }
         }
-        if lines == 0 {
-            h = base.line_height;
-            lines = 1;
+        if out.lines == 0 {
+            out.height = base.line_height;
+            out.lines = 1;
         }
-        Ok(Shaped {
-            width: w,
-            height: h,
-            lines,
-            glyphs,
-        })
+        Ok(out)
     }
     pub fn has_face(&self, style: &TextStyle) -> bool {
         self.system.db().faces().any(|f| {
@@ -212,6 +429,39 @@ pub(crate) fn text_style(css: &Css, parent: &TextStyle) -> Result<TextStyle> {
     }
     if let Some(v) = css.get("color") {
         s.color = Color::parse(v)?;
+    }
+    if let Some(v) = css.get("letter-spacing") {
+        s.letter_spacing = if v == "normal" {
+            0.0
+        } else if let Some(em) = v.strip_suffix("em") {
+            finite(
+                em.trim()
+                    .parse::<f32>()
+                    .map_err(|_| invalid("invalid letter-spacing"))?,
+                "letter-spacing",
+            )? * s.size
+        } else {
+            length_px(v)?
+        };
+        if s.letter_spacing.abs() > s.size * 2.0 {
+            return Err(invalid("letter-spacing must stay within ±2em"));
+        }
+    }
+    if let Some(v) = css.get("text-decoration") {
+        s.underline = false;
+        s.strike = false;
+        for part in v.split_whitespace() {
+            match part {
+                "none" => {}
+                "underline" => s.underline = true,
+                "line-through" => s.strike = true,
+                other => {
+                    return Err(invalid(format!(
+                        "text-decoration supports none, underline and line-through, not {other}"
+                    )));
+                }
+            }
+        }
     }
     if let Some(v) = css.get("text-align") {
         s.align = keyword(v, "text-align")?;

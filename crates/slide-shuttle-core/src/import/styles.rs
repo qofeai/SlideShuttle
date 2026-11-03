@@ -189,6 +189,14 @@ impl<'d, 'i> Styles<'d, 'i> {
         }
     }
 
+    /// The text body anchor, from the shape or the placeholders it inherits from.
+    pub fn anchor<'s>(&'s self, shape: X<'s, 'i>) -> Option<&'s str> {
+        self.chain(shape).into_iter().rev().find_map(|layer| {
+            child(layer, P, "txBody")
+                .and_then(|b| child(b, A, "bodyPr"))
+                .and_then(|b| b.attribute("anchor"))
+        })
+    }
     fn chain<'s>(&'s self, shape: X<'s, 'i>) -> Vec<X<'s, 'i>> {
         let Some(ph) = desc(shape, P, "ph") else {
             return vec![shape];
@@ -413,6 +421,54 @@ impl<'d, 'i> Styles<'d, 'i> {
                 props.insert("lineHeightPct".into(), ratio.into());
             }
         }
+        if let Some(before) = child(ppr, A, "spcBef") {
+            if let Some(points) = child(before, A, "spcPts")
+                .and_then(|n| n.attribute("val"))
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                props.insert("spaceBefore".into(), points.into());
+            } else if child(before, A, "spcPct")
+                .is_some_and(|n| n.attribute("val").is_some_and(|v| v != "0"))
+            {
+                problems.insert("percentage paragraph spacing is not reconstructed".into());
+            }
+        }
+        for attr in ["marL", "indent"] {
+            if let Some(v) = ppr.attribute(attr).and_then(|v| v.parse::<i64>().ok()) {
+                props.insert(attr.into(), v.into());
+            }
+        }
+        for n in ppr
+            .children()
+            .filter(|n| n.tag_name().namespace() == Some(A))
+        {
+            match n.tag_name().name() {
+                "buNone" => {
+                    props.insert("bullet".into(), "none".into());
+                }
+                "buChar" => {
+                    props.insert("bullet".into(), "char".into());
+                    if !["•", "–", "-", "▪", "◦", "·"].contains(&n.attribute("char").unwrap_or("•"))
+                    {
+                        problems.insert("custom bullet characters are drawn as • or –".into());
+                    }
+                }
+                "buAutoNum" => {
+                    props.insert("bullet".into(), "number".into());
+                    if let Some(start) = n.attribute("startAt").and_then(|v| v.parse::<u64>().ok())
+                    {
+                        props.insert("bulletStart".into(), start.into());
+                    } else {
+                        props.remove("bulletStart");
+                    }
+                    let kind = n.attribute("type").unwrap_or("arabicPeriod");
+                    if kind != "arabicPeriod" {
+                        problems.insert(format!("numbering style {kind} is drawn as 1. 2. 3."));
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Some(run) = child(ppr, A, "defRPr") {
             self.run(run, cjk, props, problems);
         }
@@ -463,13 +519,36 @@ impl<'d, 'i> Styles<'d, 'i> {
         if let Some(color) = self.theme.fill(rpr, None, problems) {
             props.insert("color".into(), color_hex(color).into());
         }
-        for attr in ["u", "strike", "cap", "baseline", "spc"] {
-            if rpr
-                .attribute(attr)
-                .is_some_and(|v| !["0", "none", "noStrike"].contains(&v))
-            {
-                problems.insert(format!("text property {attr} is not reconstructed"));
+        if let Some(u) = rpr.attribute("u") {
+            props.insert("underline".into(), (u != "none").into());
+            if !["none", "sng", "heavy"].contains(&u) {
+                problems.insert(format!("underline style {u} is drawn as a single line"));
             }
+        }
+        if let Some(strike) = rpr.attribute("strike") {
+            props.insert("strike".into(), (strike != "noStrike").into());
+        }
+        if let Some(baseline) = rpr
+            .attribute("baseline")
+            .and_then(|v| v.parse::<i64>().ok())
+        {
+            let shift = match baseline {
+                0 => "baseline",
+                b if b > 0 => "super",
+                _ => "sub",
+            };
+            props.insert("baseline".into(), shift.into());
+        }
+        if let Some(spacing) = rpr.attribute("spc").and_then(|v| v.parse::<i64>().ok()) {
+            props.insert("letterSpacing".into(), spacing.into());
+        }
+        if let Some(color) =
+            child(rpr, A, "highlight").and_then(|h| self.theme.color_child(h, None, problems))
+        {
+            props.insert("highlight".into(), color_hex(color).into());
+        }
+        if rpr.attribute("cap").is_some_and(|v| v != "none") {
+            problems.insert("text property cap is not reconstructed".into());
         }
     }
     pub fn default_text_limits(&self) -> Problems {
@@ -484,18 +563,13 @@ impl<'d, 'i> Styles<'d, 'i> {
 }
 
 fn paragraph_limits(ppr: X<'_, '_>, problems: &mut Problems) {
-    for attr in ["marL", "marR", "indent"] {
-        if ppr.attribute(attr).is_some_and(|v| v != "0") {
-            problems.insert(format!("paragraph {attr} is not reconstructed"));
-        }
+    if ppr.attribute("marR").is_some_and(|v| v != "0") {
+        problems.insert("paragraph marR is not reconstructed".into());
     }
-    if ppr.children().any(|n| {
-        n.tag_name().namespace() == Some(A)
-            && ["buChar", "buAutoNum", "buBlip"].contains(&n.tag_name().name())
-    }) {
-        problems.insert("paragraph bullets are not reconstructed".into());
+    if child(ppr, A, "buBlip").is_some() {
+        problems.insert("picture bullets are not reconstructed".into());
     }
-    for name in ["spcBef", "spcAft", "tabLst"] {
+    for name in ["spcAft", "tabLst"] {
         if child(ppr, A, name).is_some_and(|n| {
             n.descendants()
                 .any(|v| v.attribute("val").is_some_and(|v| v != "0") || v.has_tag_name((A, "tab")))

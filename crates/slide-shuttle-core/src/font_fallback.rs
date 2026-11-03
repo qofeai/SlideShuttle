@@ -82,8 +82,8 @@ pub(crate) fn apply(deck: &mut Deck, fallback: &str, text: &TextEngine) -> Resul
             ) {
                 let resolved = resolve(&requested, fallback, text)?;
                 bind(&mut node.style, &requested, &resolved, &mut changes);
-                if let Kind::Text { spans } = &mut node.kind {
-                    for span in spans {
+                if let Kind::Text { paragraphs } = &mut node.kind {
+                    for span in paragraphs.iter_mut().flat_map(|p| &mut p.spans) {
                         let requested_span = text_style(&span.style, &requested)?;
                         let resolved_span = resolve(&requested_span, fallback, text)?;
                         bind(

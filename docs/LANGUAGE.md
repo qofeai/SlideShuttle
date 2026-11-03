@@ -52,7 +52,7 @@ deck/
 |---|---|
 | `Box` | 布局与背景，任意支持的子节点 |
 | `Group` | 与 Box 同样布局；PPTX 输出一层原生组；不支持嵌套 Group、组旋转或组级透明度 |
-| `Text` | 文本、相邻 `Span style="…"`、`br`；保留作者换行并自动折行 |
+| `Text` | 行内内容（文本、`Span`、`A`、`br`），或只含 `P` / `List` 的段落内容；保留作者换行并自动折行，见下文“富文本” |
 | `Image` | `src` 为 Asset ID 或相对路径；PNG/JPEG；contain / cover / fill；边框、背景放在外层 Box；不支持图片圆角 |
 | `Shape` | `shape="rect|ellipse|line"`，默认 rect |
 | `Path` | `d` 为绝对 M/L/C/Z；`viewBox="100 100"` 为逻辑宽高；不是完整 SVG |
@@ -79,13 +79,42 @@ deck/
 | 文字 | font-family、font-size、font-weight:400/700、font-style:normal/italic、line-height、color、text-align:left/center/right/justify |
 | 换行 | white-space:normal / nowrap / pre-wrap；当前 normal 与 pre-wrap 都保留 XML 文本中的空白，不实现浏览器空白折叠 |
 
-字体必须真的包含所请求的字重/斜体 face；不合成。`Span` 只接受 font-family/size/weight/style、line-height 和 color。颜色、字重、字体继承；行高随字号按继承比率变化，显式 line-height 可用长度或倍数。布局使用 f32 并关闭 Taffy 像素取整；PPTX 到最后一步才转换整数 EMU。
+字体必须真的包含所请求的字重/斜体 face；不合成。`Span` 只接受 font-family/size/weight/style、line-height、color、letter-spacing、text-decoration、vertical-align（super/sub）与 background-color（高亮）。颜色、字重、字体继承；行高随字号按继承比率变化，显式 line-height 可用长度或倍数。布局使用 f32 并关闭 Taffy 像素取整；PPTX 到最后一步才转换整数 EMU。
 
 完全空的 Text/Span 内容不产生行框，文字测量为 0×0、0 行；显式尺寸、背景和边框仍按盒子布局保留。明确输入的空格或换行属于内容，仍可占据行距。PPTX 导入中的纯空文本容器不会把线条/形状转成文字，空占位符也不会凭空增加一行。
 
 `check` 报告文本溢出、页面越界、图表刻度/类别标签/图例超出槽位或图表，以及缩窄 3% 后换行高度超过容器的紧排版警告。错误阻止渲染和导出。目前不对所有物体重叠作审美或遮挡判定，尚未实现自动区域冻结和碰撞修复。装饰性重叠由作者自行设计。
 
 0.2.0 导出 PPTX 时，未指定宽度或宽度 auto、采用内在宽度且没有软折行的紧标签禁用软折行，避免接收端在末尾拆出单个字母；显式宽度正文维持换行。`white-space:nowrap` 也输出禁用软折行。已有显式换行不会因此删除。这项策略不能保证所有 Office 渲染器的字形和文字边界相同。
+
+## 富文本
+
+一个 `Text` 要么只有行内内容（一个段落），要么只有 `P` 与 `List` 块；两者不能混放。
+
+```xml
+<Text id="body" style="width:600px;height:320px;font-size:22px;line-height:34px;vertical-align:middle">
+  <P>H<Span style="vertical-align:sub">2</Span>O、<Span style="text-decoration:underline">下划线</Span>、
+     <Span style="background-color:#FDE68A">高亮</Span>、<A href="https://example.com">链接</A></P>
+  <P style="text-align:right;margin-top:12px">右对齐的段落</P>
+  <List type="number" start="3" style="margin-top:12px">
+    <Item>第三项
+      <List><Item>嵌套的项目符号</Item></List>
+    </Item>
+    <Item>第四项</Item>
+  </List>
+</Text>
+```
+
+| 内容 | 说明 |
+|---|---|
+| `P` | 段落；`style` 只接受 `text-align`、`margin-top`（段前距，第一段也生效） |
+| `List` | `type="bullet"`（默认）或 `number`，`start` 为起始编号；`style` 的 `text-align` 作用于各项，`margin-top` 只加在列表之前；最多嵌套 5 层 |
+| `Item` | 一个列表项：行内内容，之后可跟嵌套 `List`。标记与悬挂缩进按该项文字字号计算，每层 1.5em；项目符号依层级为 • 或 –，编号为 `1.` |
+| `A` | `href` 只允许 http、https、mailto；使用主题链接色 `#2563EB` 和下划线，不能另设 color / text-decoration；PDF 中可点击，PPTX 为原生超链接 |
+| `Span` 行内样式 | `text-decoration: underline / line-through / none`（可组合）；`vertical-align: super / sub / baseline`（字号缩为 0.65）；`letter-spacing`（px、pt 或 em，±2em 内）；`background-color` 为文字高亮 |
+| `Text` 的 `vertical-align` | `top`（默认）/ `middle` / `bottom`，内容在文字框内的垂直位置；只能用于 Text |
+
+源码里内容两端的换行与缩进是排版用的空白，不算正文；内容中间的空白保留。PPTX 中这些都写成原生结构：段落属性、`buChar` / `buAutoNum` 项目符号与编号、`u` / `strike` / `baseline` / `spc` / `highlight`、`hlinkClick` 外部链接、`anchor` 垂直对齐；导入时同样重建，不再记为损失。
 
 窄文本可先通过 CLI `measure` 或 WASM `measureText` 获取实际字体的宽高与行数。推荐列表符号使用自动宽度，正文用 Flex 分配剩余空间，参考 [组件示例](../examples/components.xml)。这些 API 不改变语言 v1，详见 [渲染说明](RENDERING.md)。
 
