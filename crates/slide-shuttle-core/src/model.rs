@@ -361,6 +361,8 @@ pub enum Align {
     Center,
     Right,
     Justify,
+    /// Every line, the last too, spread evenly between characters.
+    Distribute,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -566,11 +568,18 @@ pub struct PositionedGlyph {
     pub advance: f32,
     pub text: String,
     pub color: Color,
+    /// Turned 90° clockwise about its origin: Latin text in a vertical line.
+    pub sideways: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextStyle {
     pub family: String,
+    /// Families after the first in `font-family`; each character uses the first that has it.
+    pub fallback: Vec<String>,
+    /// `color` as a gradient across the Text's box.
+    #[serde(skip)]
+    pub gradient: Option<Gradient>,
     pub size: f32,
     pub line_height: f32,
     pub weight: u16,
@@ -586,6 +595,8 @@ impl Default for TextStyle {
     fn default() -> Self {
         Self {
             family: "Noto Sans CJK SC".into(),
+            fallback: Vec::new(),
+            gradient: None,
             size: 24.0,
             line_height: 32.0,
             weight: 400,
@@ -745,6 +756,8 @@ pub enum Draw {
         /// Whether another layout engine may insert soft line breaks.
         export_wrap: bool,
         anchor: VerticalAlign,
+        /// Vertical lines, right to left (`writing-mode: vertical-rl`).
+        vertical: bool,
     },
     Image {
         src: String,

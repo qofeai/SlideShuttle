@@ -1092,6 +1092,75 @@ fn animations_that_cannot_play_are_errors() {
     );
 }
 #[test]
+fn vertical_distributed_gradient_and_shadowed_text_round_trip() {
+    let body = r##"<Box id="row" style="width:600px;height:220px;display:flex;gap:20px"><Text id="v" style="width:80px;height:200px;writing-mode:vertical-rl;font-size:20px;line-height:30px">Vertical text</Text><Box id="col" style="width:400px;display:flex;flex-direction:column;gap:12px"><Text id="d" style="height:30px;text-align:distribute;font-size:20px;line-height:30px">abc</Text><Text id="g" style="height:40px;font-size:28px;line-height:36px;color:linear-gradient(90deg, #FF0000, #0000FF);text-shadow:2px 2px 4px #00000080">Gradient</Text><Text id="f" style="height:30px;font-family:'DejaVu Sans', 'DejaVu Sans';font-size:20px;line-height:30px">Fonts</Text></Box></Box>"##;
+    let (_, r, s, b) = compile(&doc(body));
+    let item = |id: &str| s.pages[0].items.iter().find(|i| i.id == id).unwrap();
+    let Draw::Text { glyphs, .. } = &item("v").kind else {
+        panic!()
+    };
+    // Latin turns sideways and runs down the column.
+    assert!(glyphs.iter().all(|g| g.sideways));
+    assert!(glyphs.windows(2).all(|w| w[1].y >= w[0].y));
+    let Draw::Text { glyphs, .. } = &item("d").kind else {
+        panic!()
+    };
+    let last = glyphs.last().unwrap();
+    assert!((last.x + last.advance - item("d").rect.right()).abs() < 1.0);
+    let slide = String::from_utf8(zip_read(&b)["ppt/slides/slide1.xml"].clone()).unwrap();
+    for native in [
+        r#"vert="eaVert""#,
+        r#"algn="dist""#,
+        "<a:rPr lang=\"zh-CN\" sz=\"2100\" b=\"0\" i=\"0\"><a:gradFill",
+        "<a:outerShdw",
+    ] {
+        assert!(slide.contains(native), "{native}");
+    }
+    let imported = import::import_pptx(&b).unwrap();
+    assert!(
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r).unwrap();
+    assert_eq!(
+        render::render_png(&again, 0, &r, 1.0).unwrap(),
+        render::render_png(&s, 0, &r, 1.0).unwrap(),
+        "export → import must reproduce the same page"
+    );
+}
+#[test]
+fn text_options_that_cannot_render_are_errors() {
+    for (text, message) in [
+        (
+            r#"<Text id="t" style="height:40px;font-family:'DejaVu Sans', Missing">x</Text>"#,
+            "font face not supplied: Missing",
+        ),
+        (
+            r#"<Text id="t" style="height:40px;color:linear-gradient(90deg, #FF0000, #0000FF)">a<Span style="color:#00FF00">b</Span></Text>"#,
+            "whole Text",
+        ),
+        (
+            r#"<Text id="t" style="height:40px;writing-mode:sideways">x</Text>"#,
+            "writing-mode",
+        ),
+        (
+            r#"<Text id="t" style="height:40px;box-shadow:2px 2px #000000">x</Text>"#,
+            "text-shadow",
+        ),
+        (
+            r#"<Text id="t" style="width:60px;height:200px;writing-mode:vertical-rl;text-decoration:underline">x</Text>"#,
+            "vertical text",
+        ),
+    ] {
+        let error = layout(&parse(&doc(text)).unwrap(), &resources())
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(error.contains(message), "{text}: {error}");
+    }
+}
+#[test]
 fn images_are_resources_and_stay_images() {
     let mut r = resources();
     let image = image::RgbaImage::from_pixel(40, 20, image::Rgba([9, 168, 143, 255]));

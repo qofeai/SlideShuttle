@@ -7,6 +7,21 @@ use crate::{
 use std::collections::BTreeSet;
 
 fn resolve(requested: &TextStyle, fallback: &str, text: &TextEngine) -> Result<TextStyle> {
+    // Later families in a `font-family` list stay only when their face is supplied.
+    let requested = &TextStyle {
+        fallback: requested
+            .fallback
+            .iter()
+            .filter(|f| {
+                text.has_face(&TextStyle {
+                    family: (*f).clone(),
+                    ..requested.clone()
+                })
+            })
+            .cloned()
+            .collect(),
+        ..requested.clone()
+    };
     if text.has_face(requested) {
         return Ok(requested.clone());
     }
@@ -42,7 +57,23 @@ fn bind(
 ) {
     // Explicit leaf styles prevent the substituted base from changing an
     // independently styled Span or a nested container's inheritance.
-    css.insert("font-family".into(), resolved.family.clone());
+    css.insert(
+        "font-family".into(),
+        std::iter::once(&resolved.family)
+            .chain(&resolved.fallback)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    for dropped in requested
+        .fallback
+        .iter()
+        .filter(|f| !resolved.fallback.contains(f))
+    {
+        changes.insert(format!(
+            "font-family entry {dropped} has no supplied face; dropped"
+        ));
+    }
     css.insert("font-weight".into(), resolved.weight.to_string());
     css.insert(
         "font-style".into(),

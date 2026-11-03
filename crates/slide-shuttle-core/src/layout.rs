@@ -592,7 +592,7 @@ fn visual(n: &Node, item: &mut Item) -> Result<()> {
     }
     if matches!(n.kind, Kind::Text { .. }) && !boxed && item.shadow.is_some() {
         return Err(invalid(
-            "box-shadow needs the Text's box to be visible: give it a background or border",
+            "box-shadow needs the Text's box to be visible: give it a background or border, or use text-shadow for the letters",
         ));
     }
     let open_line = match &n.kind {
@@ -887,12 +887,33 @@ impl Emitter<'_> {
                     item.fill = Color(0, 0, 0, 0);
                     item.gradient = None;
                     item.stroke_width = 0.0;
-                    item.shadow = None;
                 }
+                // The text shape casts the shadow of its letters.
+                item.shadow = n
+                    .style
+                    .get("text-shadow")
+                    .map(|v| shadow(v))
+                    .transpose()?
+                    .flatten();
+                let vertical = match n.style.get("writing-mode").map(String::as_str) {
+                    None | Some("horizontal-tb") => false,
+                    Some("vertical-rl") => true,
+                    Some(other) => {
+                        return Err(invalid(format!(
+                            "writing-mode is horizontal-tb or vertical-rl, not {other}"
+                        )));
+                    }
+                };
                 let wrap = n.style.get("white-space").is_none_or(|s| s != "nowrap");
-                let mut shaped = self
-                    .text
-                    .shape(paragraphs, &ts, Some(content.width), wrap)?;
+                let text = &mut *self.text;
+                let mut layout_text = |share: f32| {
+                    if vertical {
+                        text.shape_vertical(paragraphs, &ts, content.height * share, wrap)
+                    } else {
+                        text.shape(paragraphs, &ts, Some(content.width * share), wrap)
+                    }
+                };
+                let mut shaped = layout_text(1.0)?;
                 let authored_lines = paragraphs.len()
                     + paragraphs
                         .iter()
@@ -905,7 +926,7 @@ impl Emitter<'_> {
                 let intrinsic_tight = n.style.get("width").is_none_or(|v| v == "auto")
                     && (content.width - shaped.width).abs() <= 0.5
                     && shaped.lines <= authored_lines;
-                let export_wrap = wrap && !intrinsic_tight;
+                let export_wrap = wrap && (vertical || !intrinsic_tight);
                 if shaped.height > content.height + 0.5 || shaped.width > content.width + 0.5 {
                     self.diagnostics.push(diag(
                     "text_overflow",
@@ -915,14 +936,14 @@ impl Emitter<'_> {
                     &format!("text measures {:.2}×{:.2}px ({} lines); available {:.2}×{:.2}px; font {} at {:.2}px",shaped.width,shaped.height,shaped.lines,content.width,content.height,ts.family,ts.size),
                 ));
                 }
-                if export_wrap
-                    && shaped.height <= content.height + 0.5
-                    && self
-                        .text
-                        .shape(paragraphs, &ts, Some(content.width * 0.97), wrap)?
-                        .height
-                        > content.height + 0.5
-                {
+                let tight = |s: &crate::text::Shaped| {
+                    if vertical {
+                        s.width > content.width + 0.5
+                    } else {
+                        s.height > content.height + 0.5
+                    }
+                };
+                if export_wrap && !tight(&shaped) && tight(&layout_text(0.97)?) {
                     self.diagnostics.push(diag(
                         "text_tight",
                         Severity::Warning,
@@ -937,13 +958,25 @@ impl Emitter<'_> {
                     .map(|v| keyword(v, "Text vertical-align"))
                     .transpose()?
                     .unwrap_or_default();
-                let free = (content.height - shaped.height).max(0.0);
-                let dy = match anchor {
-                    VerticalAlign::Top => 0.0,
-                    VerticalAlign::Middle => free / 2.0,
-                    VerticalAlign::Bottom => free,
+                // Vertical columns start at the right edge: top anchors right, bottom left.
+                let (dx, dy) = if vertical {
+                    let free = (content.width - shaped.width).max(0.0);
+                    let dx = match anchor {
+                        VerticalAlign::Top => free,
+                        VerticalAlign::Middle => free / 2.0,
+                        VerticalAlign::Bottom => 0.0,
+                    };
+                    (dx, 0.0)
+                } else {
+                    let free = (content.height - shaped.height).max(0.0);
+                    let dy = match anchor {
+                        VerticalAlign::Top => 0.0,
+                        VerticalAlign::Middle => free / 2.0,
+                        VerticalAlign::Bottom => free,
+                    };
+                    (0.0, dy)
                 };
-                shaped.offset(content.x, content.y + dy);
+                shaped.offset(content.x + dx, content.y + dy);
                 Draw::Text {
                     paragraphs: paragraphs.clone(),
                     glyphs: shaped.glyphs,
@@ -951,6 +984,7 @@ impl Emitter<'_> {
                     line_count: shaped.lines,
                     export_wrap,
                     anchor,
+                    vertical,
                 }
             }
             Kind::Image { src, clip } => {

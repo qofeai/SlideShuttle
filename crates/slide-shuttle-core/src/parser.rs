@@ -67,6 +67,8 @@ const PROPS: &[&str] = &[
     "vertical-align",
     "border-style",
     "box-shadow",
+    "text-shadow",
+    "writing-mode",
     "transform",
     "marker-start",
     "marker-end",

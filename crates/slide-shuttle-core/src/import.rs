@@ -886,7 +886,10 @@ impl Reader<'_> {
                 let unsupported = n.descendants().any(|x| {
                     x.has_tag_name((A, feature))
                         && match feature {
-                            "gradFill" => !own(x),
+                            // Run gradients become gradient text.
+                            "gradFill" => {
+                                !own(x) && !x.parent().is_some_and(|p| p.has_tag_name((A, "rPr")))
+                            }
                             "effectDag" => true,
                             "blip" => x
                                 .children()
@@ -938,6 +941,8 @@ impl Reader<'_> {
                 || props["gradient"].is_string()
                 || props["strokeWidth"].as_u64().is_some_and(|w| w > 0);
             if let Some(obj) = props.as_object_mut() {
+                // Gradient text comes from the runs (`text_gradient`).
+                obj.remove("colorGradient");
                 if tag == "graphicFrame" {
                     for (key, what) in [("gradient", "gradient"), ("shadow", "shadow")] {
                         if obj.remove(key).is_some() {
@@ -949,8 +954,12 @@ impl Reader<'_> {
                         }
                     }
                 }
-                if has_text && !boxed && obj.remove("shadow").is_some() {
-                    self.loss(page, &name, "text shadow is not reconstructed");
+                // A shadow on unfilled text falls on the letters.
+                if has_text
+                    && !boxed
+                    && let Some(shadow) = obj.remove("shadow")
+                {
+                    obj.insert("textShadow".into(), shadow);
                 }
             }
             let mut css = style_css(&props, false);
@@ -1131,6 +1140,10 @@ impl Reader<'_> {
                     let mut props = styles.text_properties(n, Some(p), Some(run), problems);
                     first_size = first_size.or_else(|| props.get("size").and_then(Value::as_u64));
                     props.remove("align");
+                    // A gradient colors the whole Text (see `text_gradient`), not one Span.
+                    if props.remove("colorGradient").is_some() {
+                        props.remove("color");
+                    }
                     let link = child(run, A, "rPr")
                         .and_then(|r| child(r, A, "hlinkClick"))
                         .and_then(|h| h.attribute((R, "id")));
@@ -1407,11 +1420,22 @@ impl Reader<'_> {
             child(n, P, "txBody").filter(|body| !plain(*body).trim().is_empty())
         {
             let spans = self.rich_body(n, body, props, part, problems);
+            let gradient = text_gradient(n, body, styles, problems)
+                .map(|g| format!(";color:{g}"))
+                .unwrap_or_default();
             let bodypr = child(body, A, "bodyPr");
             let white_space = if bodypr.is_some_and(|p| p.attribute("wrap") == Some("none")) {
                 ";white-space:nowrap"
             } else {
                 ""
+            };
+            let vertical = match bodypr.and_then(|p| p.attribute("vert")) {
+                None | Some("horz") => "",
+                Some("eaVert") => ";writing-mode:vertical-rl",
+                Some(other) => {
+                    problems.insert(format!("text direction {other} is not reconstructed"));
+                    ""
+                }
             };
             let anchor = match styles.anchor(n) {
                 Some("ctr") => ";vertical-align:middle",
@@ -1428,7 +1452,7 @@ impl Reader<'_> {
             let b = number(bodypr, "bIns", 45720);
             let text = |css: &str| {
                 format!(
-                    "<Text id=\"{import_id}\" style=\"{pos};{}{white_space}{anchor};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
+                    "<Text id=\"{import_id}\" style=\"{pos};{}{gradient}{white_space}{anchor}{vertical};padding:{t}emu {r}emu {b}emu {l}emu\">{spans}</Text>",
                     xml(css)
                 )
             };
@@ -1566,6 +1590,7 @@ fn style_css(p: &Value, span: bool) -> String {
             "ctr" => "center",
             "r" => "right",
             "just" => "justify",
+            "dist" => "distribute",
             _ => "left",
         };
         css.push(format!("text-align:{a}"));
@@ -1573,6 +1598,13 @@ fn style_css(p: &Value, span: bool) -> String {
     if let Some(gradient) = p["gradient"].as_str() {
         css.retain(|d| !d.starts_with("background-color:"));
         css.push(format!("background:{gradient}"));
+    }
+    if let Some(shadow) = p["textShadow"].as_str() {
+        css.push(format!("text-shadow:{shadow}"));
+    }
+    if let Some(gradient) = p["colorGradient"].as_str() {
+        css.retain(|d| !d.starts_with("color:"));
+        css.push(format!("color:{gradient}"));
     }
     if let Some(shadow) = p["shadow"].as_str() {
         css.push(format!("box-shadow:{shadow}"));
@@ -2037,7 +2069,36 @@ fn text_align(algn: &str) -> &'static str {
         "ctr" => "center",
         "r" => "right",
         "just" => "justify",
+        "dist" => "distribute",
         _ => "left",
+    }
+}
+/// A gradient every run shares colors the whole Text; on only some runs it is drawn solid.
+fn text_gradient(
+    n: X<'_, '_>,
+    body: X<'_, '_>,
+    styles: &Styles<'_, '_>,
+    problems: &mut Problems,
+) -> Option<String> {
+    let runs = body
+        .descendants()
+        .filter(|x| x.has_tag_name((A, "r")))
+        .map(|r| {
+            styles
+                .text_properties(n, r.parent(), Some(r), problems)
+                .get("colorGradient")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    match runs.first() {
+        Some(Some(g)) if runs.iter().all(|r| r.as_ref() == Some(g)) => Some(g.clone()),
+        _ => {
+            if runs.iter().any(Option::is_some) {
+                problems.insert("a gradient on part of a text is drawn in the text color".into());
+            }
+            None
+        }
     }
 }
 /// Line-end markers; only lines and paths can carry them.

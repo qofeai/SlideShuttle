@@ -7,6 +7,10 @@ use std::collections::BTreeMap;
 pub(crate) struct TextEngine {
     pub system: FontSystem,
     faces: BTreeMap<cosmic_text::fontdb::ID, (usize, u32)>,
+    /// Whether a family (at a weight and slant) has a glyph for a character.
+    coverage: BTreeMap<(String, u16, bool, char), bool>,
+    /// Shaping for vertical lines: the font's vertical forms of punctuation and brackets.
+    vertical: bool,
 }
 #[derive(Default)]
 pub(crate) struct Shaped {
@@ -85,6 +89,8 @@ impl TextEngine {
         Ok(Self {
             system: FontSystem::new_with_locale_and_db("zh-CN".into(), db),
             faces: keys,
+            coverage: BTreeMap::new(),
+            vertical: false,
         })
     }
     /// Shape paragraphs into one block: list items get a hanging indent and a marker,
@@ -165,6 +171,54 @@ impl TextEngine {
         out.height = y;
         Ok(out)
     }
+    /// `writing-mode: vertical-rl`: lines become columns from right to left, `length` px
+    /// tall. CJK characters stand upright; other text turns sideways, as in Office's eaVert.
+    pub fn shape_vertical(
+        &mut self,
+        paragraphs: &[Paragraph],
+        base: &TextStyle,
+        length: f32,
+        wrap: bool,
+    ) -> Result<Shaped> {
+        let plain = paragraphs.iter().all(|p| {
+            p.list.is_none()
+                && p.spans.iter().all(|s| {
+                    s.href.is_none()
+                        && !["text-decoration", "background", "vertical-align"]
+                            .iter()
+                            .any(|k| s.style.contains_key(*k))
+                })
+        });
+        if !plain || base.underline || base.strike {
+            return Err(invalid(
+                "vertical text has no lists, links, decorations, highlights or super/subscripts",
+            ));
+        }
+        self.vertical = true;
+        let h = self.shape(paragraphs, base, Some(length), wrap);
+        self.vertical = false;
+        let mut h = h?;
+        // Turn the horizontal block a quarter clockwise: (x, y) -> (H - y, x).
+        let height = h.height;
+        let mut bottom = 0.0f32;
+        for g in &mut h.glyphs {
+            let (x, baseline) = (g.x, g.y);
+            bottom = bottom.max(x + g.advance);
+            if g.text.chars().next().is_some_and(upright) {
+                // The em box sits centered on the line, its top where the character began.
+                let center = height - (baseline - 0.38 * g.size);
+                g.x = center - g.advance / 2.0;
+                g.y = x + 0.88 * g.size;
+            } else {
+                g.x = height - baseline;
+                g.y = x;
+                g.sideways = true;
+            }
+        }
+        h.width = height;
+        h.height = bottom;
+        Ok(h)
+    }
     fn shape_spans(
         &mut self,
         spans: &[Span],
@@ -208,14 +262,51 @@ impl TextEngine {
             })
             .collect::<Result<Vec<_>>>()?;
         for look in &looks {
-            if !self.has_face(&look.style) {
-                return Err(invalid(format!(
-                    "font face not supplied: {} weight={} italic={}",
-                    look.style.family, look.style.weight, look.style.italic
-                )));
+            let s = &look.style;
+            for family in std::iter::once(&s.family).chain(&s.fallback) {
+                if !self.has_face(&TextStyle {
+                    family: family.clone(),
+                    ..s.clone()
+                }) {
+                    return Err(invalid(format!(
+                        "font face not supplied: {family} weight={} italic={}",
+                        s.weight, s.italic
+                    )));
+                }
+            }
+            if s.gradient != base.gradient {
+                return Err(invalid(
+                    "a gradient color fills a whole Text; its Spans cannot change color",
+                ));
             }
         }
-        fn attr(look: &Look, index: usize) -> Attrs<'_> {
+        // Each character takes the first family in `font-family` that has it; spaces stay
+        // with the text around them.
+        let mut pieces: Vec<(&str, usize, &str)> = Vec::new();
+        for (i, (span, look)) in spans.iter().zip(&looks).enumerate() {
+            let s = &look.style;
+            let (mut start, mut current) = (0, None::<&str>);
+            for (at, ch) in span.text.char_indices() {
+                if s.fallback.is_empty() || ch.is_whitespace() {
+                    continue;
+                }
+                let family = std::iter::once(&s.family)
+                    .chain(&s.fallback)
+                    .find(|f| self.covers(f, s.weight, s.italic, ch))
+                    .unwrap_or(&s.family)
+                    .as_str();
+                match current {
+                    Some(c) if c != family => {
+                        pieces.push((&span.text[start..at], i, c));
+                        start = at;
+                    }
+                    _ => {}
+                }
+                current = Some(family);
+            }
+            pieces.push((&span.text[start..], i, current.unwrap_or(&s.family)));
+        }
+        fn attr<'a>(look: &'a Look, index: usize, family: &'a str, vertical: bool) -> Attrs<'a> {
             let s = &look.style;
             let size = if look.shift == 0.0 {
                 s.size
@@ -223,7 +314,7 @@ impl TextEngine {
                 s.size * SCRIPT_SCALE
             };
             let mut attrs = Attrs::new()
-                .family(Family::Name(&s.family))
+                .family(Family::Name(family))
                 .weight(Weight(s.weight))
                 .style(if s.italic {
                     cosmic_text::Style::Italic
@@ -244,6 +335,11 @@ impl TextEngine {
             if s.strike {
                 attrs = attrs.strikethrough();
             }
+            if vertical {
+                let mut features = cosmic_text::FontFeatures::new();
+                features.enable(cosmic_text::FeatureTag::new(b"vert"));
+                attrs = attrs.font_features(features);
+            }
             attrs
         }
         let base_look = Look {
@@ -251,12 +347,11 @@ impl TextEngine {
             shift: 0.0,
             highlight: None,
         };
-        let default = attr(&base_look, usize::MAX);
-        let rich = spans
+        let vertical = self.vertical;
+        let default = attr(&base_look, usize::MAX, &base.family, vertical);
+        let rich = pieces
             .iter()
-            .zip(looks.iter())
-            .enumerate()
-            .map(|(i, (span, look))| (span.text.as_str(), attr(look, i)))
+            .map(|(text, i, family)| (*text, attr(&looks[*i], *i, family, vertical)))
             .collect::<Vec<_>>();
         let mut buffer = Buffer::new(&mut self.system, Metrics::new(base.size, base.line_height));
         buffer.set_size(width.map(|v| v.max(0.01)), None);
@@ -266,13 +361,40 @@ impl TextEngine {
             Align::Center => cosmic_text::Align::Center,
             Align::Right => cosmic_text::Align::Right,
             Align::Justify => cosmic_text::Align::Justified,
+            // Spread below, line by line.
+            Align::Distribute => cosmic_text::Align::Left,
         };
         buffer.set_rich_text(rich, &default, Shaping::Advanced, Some(align));
         buffer.shape_until_scroll(&mut self.system, false);
         let mut out = Shaped::default();
-        for run in buffer.layout_runs() {
+        let mut distributed;
+        for mut run in buffer.layout_runs() {
             if out.lines == 0 {
                 out.first_baseline = run.line_y;
+            }
+            // Distributed lines, the last one too, spread the free width between characters.
+            if base.align == Align::Distribute
+                && let Some(width) = width
+            {
+                let mut clusters = Vec::new();
+                for g in run.glyphs.iter() {
+                    if clusters.last() != Some(&g.start) {
+                        clusters.push(g.start);
+                    }
+                }
+                let extra = (width - run.line_w).max(0.0);
+                let gaps = clusters.len().saturating_sub(1);
+                let mut glyphs = run.glyphs.to_vec();
+                for g in &mut glyphs {
+                    let k = clusters.iter().position(|c| *c == g.start).unwrap_or(0);
+                    g.x += if gaps == 0 {
+                        extra / 2.0
+                    } else {
+                        extra * k as f32 / gaps as f32
+                    };
+                }
+                distributed = glyphs;
+                run.glyphs = &distributed;
             }
             out.lines += 1;
             out.width = out.width.max(run.line_w);
@@ -370,6 +492,7 @@ impl TextEngine {
                     advance: g.w,
                     text,
                     color: Color(c.r(), c.g(), c.b(), c.a()),
+                    sideways: false,
                 });
             }
         }
@@ -378,6 +501,30 @@ impl TextEngine {
             out.lines = 1;
         }
         Ok(out)
+    }
+    fn covers(&mut self, family: &str, weight: u16, italic: bool, ch: char) -> bool {
+        let key = (family.to_owned(), weight, italic, ch);
+        if let Some(known) = self.coverage.get(&key) {
+            return *known;
+        }
+        let style = if italic {
+            cosmic_text::fontdb::Style::Italic
+        } else {
+            cosmic_text::fontdb::Style::Normal
+        };
+        let id = self
+            .system
+            .db()
+            .faces()
+            .find(|f| {
+                f.families.iter().any(|n| n.0 == family) && f.weight.0 == weight && f.style == style
+            })
+            .map(|f| f.id);
+        let found = id
+            .and_then(|id| self.system.get_font(id, Weight(weight)))
+            .is_some_and(|font| font.as_swash().charmap().map(ch) != 0);
+        self.coverage.insert(key, found);
+        found
     }
     pub fn has_face(&self, style: &TextStyle) -> bool {
         self.system.db().faces().any(|f| {
@@ -393,10 +540,39 @@ impl TextEngine {
     }
 }
 
+/// Characters that stay upright in vertical text: CJK ideographs, kana, Hangul, CJK
+/// punctuation and full-width forms (shaped to their vertical forms).
+fn upright(c: char) -> bool {
+    let u = c as u32;
+    matches!(
+        u,
+        0x1100..=0x11FF
+            | 0x2E80..=0x2FDF
+            | 0x3000..=0x303F
+            | 0x3040..=0x30FF
+            | 0x3100..=0x31FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0xFF00..=0xFFEF
+            | 0x20000..=0x2FFFF
+    )
+}
 pub(crate) fn text_style(css: &Css, parent: &TextStyle) -> Result<TextStyle> {
     let mut s = parent.clone();
     if let Some(v) = css.get("font-family") {
-        s.family = v.trim_matches(['\'', '"']).to_owned();
+        let mut names = v
+            .split(',')
+            .map(|f| f.trim().trim_matches(['\'', '"']).to_owned())
+            .filter(|f| !f.is_empty());
+        s.family = names
+            .next()
+            .ok_or_else(|| invalid("font-family is empty"))?;
+        s.fallback = names.collect();
+        if s.fallback.len() > 3 {
+            return Err(invalid("font-family lists at most 4 families"));
+        }
     }
     if let Some(v) = css.get("font-size") {
         s.size = length_px(v)?;
@@ -428,7 +604,14 @@ pub(crate) fn text_style(css: &Css, parent: &TextStyle) -> Result<TextStyle> {
         };
     }
     if let Some(v) = css.get("color") {
-        s.color = Color::parse(v)?;
+        s.gradient = None;
+        if v.contains("gradient(") {
+            let (_, g) = crate::layout::paint(v)?;
+            s.color = g.as_ref().map_or(s.color, |g| g.stops[0].1);
+            s.gradient = g;
+        } else {
+            s.color = Color::parse(v)?;
+        }
     }
     if let Some(v) = css.get("letter-spacing") {
         s.letter_spacing = if v == "normal" {
