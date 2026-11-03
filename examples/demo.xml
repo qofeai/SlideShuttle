@@ -62,8 +62,8 @@
         </Chart>
         <Box id="data/details" style="display:flex;flex-direction:column;gap:20px">
           <Text id="data/table-title" style="height:40px;font-size:26px;line-height:36px;font-weight:700;color:var(--ink)">交付对象的性质</Text>
-          <Table id="data/table" columns="1 1" style="height:252px;font-size:18px;line-height:28px;color:#142B36">
-            <Row><Cell>对象</Cell><Cell>PPTX 表达</Cell></Row>
+          <Table id="data/table" columns="1 1" style="background:#FFFFFF;height:252px;font-size:18px;line-height:28px;color:#142B36">
+            <Row style="background:#EBF0F8;font-weight:700"><Cell>对象</Cell><Cell>PPTX 表达</Cell></Row>
             <Row><Cell>标题与正文</Cell><Cell>原生文本框</Cell></Row>
             <Row><Cell>结构化数据</Cell><Cell>表格 / 图表</Cell></Row>
             <Row><Cell>复合图形</Cell><Cell>原生分组</Cell></Row>

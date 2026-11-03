@@ -91,10 +91,14 @@ pub(crate) fn layout_with_text(
                                 .and_then(|b| crate::render::image_size(b).ok())
                                 .map(|(w, h)| (w as f32, h as f32))
                                 .unwrap_or((100.0, 100.0)),
-                            Kind::Table { rows, .. } => (
-                                width.unwrap_or(600.0),
-                                rows.len() as f32 * (leaf.text.line_height + 20.0),
-                            ),
+                            Kind::Table { rows, columns } => {
+                                let w = width.unwrap_or(600.0);
+                                let h =
+                                    crate::table::row_heights(rows, columns, w, &leaf.text, text)
+                                        .map(|h| h.iter().sum())
+                                        .unwrap_or(leaf.text.line_height);
+                                (w, h)
+                            }
                             Kind::Chart { .. } => (width.unwrap_or(600.0), 320.0),
                             // Outline icon sets are drawn on a 24px grid.
                             Kind::Icon { .. } => (24.0, 24.0),
@@ -956,13 +960,29 @@ impl Emitter<'_> {
                 view_box: *view_box,
             },
             Kind::Table { rows, columns } => {
-                let cells =
-                    table_cells(&item, rows, columns, self.text, self.page, self.diagnostics)?;
-                Draw::Table {
-                    rows: rows.clone(),
-                    columns: columns.clone(),
-                    cells,
-                }
+                // The table's border is the default grid line; the cells draw it.
+                let grid = if n.style.contains_key("border-width") {
+                    CellBorder {
+                        width: item.stroke_width,
+                        color: item.stroke,
+                        dash: item.dash,
+                    }
+                } else {
+                    crate::table::GRID
+                };
+                item.stroke_width = 0.0;
+                let (page, about) = (self.page, item.clone());
+                let diagnostics = &mut *self.diagnostics;
+                crate::table::place(
+                    &item,
+                    rows,
+                    columns,
+                    grid,
+                    self.text,
+                    &mut |code, message| {
+                        diagnostics.push(diag(code, Severity::Error, page, &about, &message))
+                    },
+                )?
             }
             Kind::Chart {
                 chart_type,
@@ -1054,81 +1074,6 @@ fn label(
     );
     item.text_style = s;
     Ok(item)
-}
-fn table_cells(
-    parent: &Item,
-    rows: &[Vec<String>],
-    columns: &[f32],
-    text: &mut TextEngine,
-    page: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<Vec<Item>> {
-    let mut cells = Vec::new();
-    let sum: f32 = columns.iter().sum();
-    let rh = parent.rect.height / rows.len() as f32;
-    for (r, row) in rows.iter().enumerate() {
-        let mut x = parent.rect.x;
-        for (c, value) in row.iter().enumerate() {
-            let width = parent.rect.width * columns[c] / sum;
-            let rect = Rect {
-                x,
-                y: parent.rect.y + r as f32 * rh,
-                width,
-                height: rh,
-            };
-            let mut cell = primitive(
-                parent,
-                format!("{}/cell/{r}/{c}", parent.id),
-                rect,
-                if r == 0 {
-                    Color(235, 240, 248, 255)
-                } else {
-                    Color::WHITE
-                },
-                Draw::Box,
-            );
-            cell.stroke = Color(210, 217, 227, 255);
-            cell.stroke_width = 1.0;
-            cells.push(cell);
-            let content = Rect {
-                x: rect.x + 8.0,
-                y: rect.y + 6.0,
-                width: (width - 16.0).max(0.0),
-                height: (rh - 12.0).max(0.0),
-            };
-            let paragraphs = vec![Paragraph::plain(value.clone())];
-            let mut shape =
-                text.shape(&paragraphs, &parent.text_style, Some(content.width), true)?;
-            let mut ti = primitive(
-                parent,
-                format!("{}/text/{r}/{c}", parent.id),
-                content,
-                Color(0, 0, 0, 0),
-                Draw::Box,
-            );
-            if shape.height > content.height + 0.5 {
-                diagnostics.push(diag(
-                    "table_text_overflow",
-                    Severity::Error,
-                    page,
-                    &ti,
-                    "cell text exceeds row height",
-                ));
-            }
-            shape.offset(content.x, content.y);
-            ti.kind = Draw::Text {
-                paragraphs,
-                glyphs: shape.glyphs,
-                marks: shape.marks,
-                line_count: shape.lines,
-                export_wrap: true,
-                anchor: VerticalAlign::Top,
-            };
-            cells.push(ti);
-            x += width;
-        }
-    }
-    Ok(cells)
 }
 fn chart_items(
     parent: &Item,

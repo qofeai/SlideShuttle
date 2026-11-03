@@ -10,6 +10,7 @@ pub mod parser;
 pub mod pptx;
 pub mod preset;
 pub mod render;
+mod table;
 mod text;
 pub use compiler::{CompiledDocument, Compiler, RenderStats, TextMeasurement};
 pub use layout::layout;

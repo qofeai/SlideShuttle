@@ -57,7 +57,7 @@ deck/
 | `Icon` | `src` 为单色 SVG 图标（如 Lucide），按 `color` 着色，等比放入盒子（默认 24×24）；支持 path / circle / ellipse / rect / line / polyline / polygon / g，不支持 transform、文字、渐变；PPTX 中为可编辑的自定义形状 |
 | `Shape` | `shape` 为 187 种 OOXML 预设之一（默认 rect），如 triangle、rightArrow、star5、wedgeRoundRectCallout、bentConnector3；`adjust` 为预设调整值。完整列表与默认值见 [预设形状](SHAPES.md) 或 `slide-shuttle shapes` |
 | `Path` | `d` 为完整 SVG 路径语法（相对命令、H/V、S/T、Q、A 弧线均可）；`viewBox="100 100"` 为逻辑宽高 |
-| `Table` | `Row` 内 `Cell`，矩形纯文字数据；`columns="2 1"` 为列宽比例；等高行、固定表头配色和边框，无合并单元格 |
+| `Table` | `Row` 内 `Cell`；`columns="2 1"` 为列宽比例；单元格可含富文本与列表、`colspan` / `rowspan`；样式按 表格 → 行 → 单元格 继承，见下文“表格” |
 | `Chart` | `type="bar|line"`；`Labels` 用 `|` 分隔；`Series name="…" color="#…"` 内空格分隔有限数值；最多 8 系列、100 分类 |
 
 表格和图表同时支持本地预览与原生 PPTX。图表导出缓存数值以及嵌入的 `.xlsx` 工作簿。当前 Office 图表使用自身坐标轴/图例排版，与本地预览的几何不保证一致。
@@ -91,6 +91,26 @@ deck/
 `check` 报告文本溢出、页面越界、图表刻度/类别标签/图例超出槽位或图表，以及缩窄 3% 后换行高度超过容器的紧排版警告。错误阻止渲染和导出。目前不对所有物体重叠作审美或遮挡判定，尚未实现自动区域冻结和碰撞修复。装饰性重叠由作者自行设计。
 
 0.2.0 导出 PPTX 时，未指定宽度或宽度 auto、采用内在宽度且没有软折行的紧标签禁用软折行，避免接收端在末尾拆出单个字母；显式宽度正文维持换行。`white-space:nowrap` 也输出禁用软折行。已有显式换行不会因此删除。这项策略不能保证所有 Office 渲染器的字形和文字边界相同。
+
+## 表格
+
+```xml
+<Style name="head">background:#0F172A;color:#FFFFFF;font-weight:700</Style>
+…
+<Table id="plan" columns="2 1 1" style="width:560px;font-size:16px;line-height:24px;border:1px solid #CBD5E1">
+  <Row class="head"><Cell rowspan="2">项目</Cell><Cell colspan="2" style="text-align:center">季度</Cell></Row>
+  <Row class="head"><Cell>Q1</Cell><Cell>Q2</Cell></Row>
+  <Row style="height:56px"><Cell><List><Item>新客户</Item><Item>续约率</Item></List></Cell><Cell>12%</Cell><Cell style="background:#DCFCE7">18%</Cell></Row>
+  <Row style="border-top:2px dashed #DC2626"><Cell>合计</Cell><Cell>30%</Cell><Cell>36%</Cell></Row>
+</Table>
+```
+
+- 行高随内容自动撑开；Row 的 `height` 是最小高度。Table 设了高度时，富余空间分给未指定高度的行；内容放不下报 `table_overflow`。
+- 合并单元格必须恰好铺满网格：每行填满所有未被上方 rowspan 占据的列，否则报错。
+- Row 与 Cell 可设文字属性、`background`（纯色）、`padding`、`vertical-align`（top / middle / bottom，默认 middle）、`border` 与 `border-top/right/bottom/left`（`<宽度> solid|dashed|dotted <颜色>`）；Row 另可设 `height`。可用 `class` 复用样式，例如表头与斑马纹。
+- Table 的 `border` 是默认网格线（不写时为 1px #D2D9E3，`border:0 solid #000` 去掉），`background` 铺在单元格下面。
+- 相邻单元格的公共边只画一条：明确设置的边框优先于默认网格，其次取更宽者，再其次取上方或左侧单元格的；PPTX 写入的也是同一结果。
+- PPTX 为原生表格（`gridSpan` / `rowSpan` / `hMerge` / `vMerge`、逐格边距、对齐、填充与四边边框）；导入时同样还原，表格主题样式除外。
 
 ## 富文本
 

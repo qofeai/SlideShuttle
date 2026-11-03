@@ -55,8 +55,8 @@
           <Series name="示例序列 A" color="#087E6D">-8 12 18 24</Series>
           <Series name="示例序列 B" color="#1D4ED8">2 8 16 20</Series>
         </Chart>
-        <Table id="data/table" columns="1 1 1" style="height:300px;font-size:18px;line-height:28px">
-          <Row><Cell>季度</Cell><Cell>序列 A</Cell><Cell>序列 B</Cell></Row>
+        <Table id="data/table" columns="1 1 1" style="background:#FFFFFF;height:300px;font-size:18px;line-height:28px">
+          <Row style="background:#EBF0F8;font-weight:700"><Cell>季度</Cell><Cell>序列 A</Cell><Cell>序列 B</Cell></Row>
           <Row><Cell>Q1</Cell><Cell>-8</Cell><Cell>2</Cell></Row>
           <Row><Cell>Q2</Cell><Cell>12</Cell><Cell>8</Cell></Row>
           <Row><Cell>Q3</Cell><Cell>18</Cell><Cell>16</Cell></Row>
