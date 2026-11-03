@@ -33,7 +33,7 @@ deck/
 
 根节点：`Deck title="…" width="1280px" height="720px" font-family="…"`。长度支持 px、pt、emu，0 可省单位；1 px = 9525 EMU，1 pt = 4/3 px。页面尺寸最大 16384 px。颜色支持 `#RGB`、`#RRGGBB`、`#RRGGBBAA`、black、white、transparent。
 
-`Slide` 需要全稿唯一的 `id`，背景为纯色。普通节点必须有稳定的 `id`，只需在本页内唯一，允许 ASCII 字母、数字和 `_ - / .`；诊断以页面 ID 加节点 ID 定位。渲染诊断带文件、行列和节点 ID；解析与布局错误同样以 `文件 line L, column C: …` 指向出错元素，一次报告各兄弟元素的独立错误（最多 50 条）。
+`Slide` 需要全稿唯一的 `id`；`background` 可为纯色、渐变或 `url(<图片>)`（铺满页面并裁切，PPTX 中为原生页面背景）。普通节点必须有稳定的 `id`，只需在本页内唯一，允许 ASCII 字母、数字和 `_ - / .`；诊断以页面 ID 加节点 ID 定位。渲染诊断带文件、行列和节点 ID；解析与布局错误同样以 `文件 line L, column C: …` 指向出错元素，一次报告各兄弟元素的独立错误（最多 50 条）。
 
 | 元素 | 属性 / 内容 |
 |---|---|
@@ -72,8 +72,11 @@ deck/
 | 定位 | position: relative / absolute；left/top/right/bottom |
 | Flex | display:flex；row / column；flex-grow、flex-shrink、flex-basis；gap；align-items/self；justify-content |
 | Grid | 显式 px/pt/emu、正数 fr、auto 轨道；grid-template-columns/rows；gap；grid-column/row 的 line、span、`start / end` |
-| 填充 | background/background-color：纯色或 `linear-gradient(to right|to bottom, #色1, #色2)`；渐变限两个不透明色标 |
-| 边线 | `border:1px solid #D0D8DE`，或统一 border-width 与 border-color；非负 border-radius |
+| 填充 | background/background-color：纯色、`linear-gradient(<角度>deg 或 to top/right/bottom/left, 色标…)`、`radial-gradient([circle,] 色标…)`；2–8 个色标，色标可带 `0%–100%` 位置和透明度，缺省位置均分；径向渐变从中心到最远角 |
+| 边线 | `border:1px solid|dashed|dotted #D0D8DE`，或 border-width、border-style、border-color；非负 border-radius。线条与 Path 的 border 是描边，不占布局空间 |
+| 线端 | `marker-start` / `marker-end`：arrow、stealth、diamond、oval、none；只用于 `shape="line"` 与 Path，大小随线宽 |
+| 阴影 | `box-shadow:<x> <y> [<模糊>] <颜色>`（单个外阴影，模糊 0–200px）；作用于形状、图片和有背景或边框的 Text 盒子；PDF 中阴影以图像嵌入 |
+| 变换 | `transform:rotate(<角度>deg)`、`scaleX(-1)`、`scaleY(-1)`，按 CSS 从右到左组合，绕自身中心，不影响布局；只用于叶子节点，不用于容器、Table、Chart，以及带背景或边框的 Text；越界检查按旋转后的外框 |
 | 透明度 | opacity:0–1，仅叶子绘图对象；Table/Chart/容器不接受 opacity |
 | 图片 | object-fit:contain / cover / fill |
 | 文字 | font-family、font-size、font-weight:400/700、font-style:normal/italic、line-height、color、text-align:left/center/right/justify |

@@ -105,7 +105,7 @@ fn theme_fill_stroke_text_alpha_and_default_style_render_as_actual_colors() {
     parts.insert("ppt/presentation.xml".into(), presentation.into_bytes());
     let (imp, _, scene) = imported(&parts);
     assert!(imp.snapshot.losses.is_empty(), "{:?}", imp.snapshot.losses);
-    assert_eq!(scene.pages[0].background, Color(255, 255, 255, 255));
+    assert_eq!(scene.pages[0].background.fill, Color(255, 255, 255, 255));
     let item = &scene.pages[0].items[0];
     assert_eq!(item.fill, Color(32, 64, 96, 128));
     assert_eq!(item.stroke, Color(32, 160, 64, 64));
@@ -236,7 +236,7 @@ fn theme_style_matrix_placeholder_colors_and_background_references_resolve() {
     );
     let (imp, _, scene) = imported(&parts);
     assert!(imp.snapshot.losses.is_empty(), "{:?}", imp.snapshot.losses);
-    assert_eq!(scene.pages[0].background, Color(18, 52, 86, 255));
+    assert_eq!(scene.pages[0].background.fill, Color(18, 52, 86, 255));
     assert_eq!(scene.pages[0].items[0].fill, Color(32, 64, 96, 128));
     assert_eq!(scene.pages[0].items[0].stroke, Color(32, 160, 64, 255));
     parts.insert(
@@ -423,7 +423,7 @@ fn inherited_master_background_and_image_opacity_are_rendered() {
         slide("", "", "").into_bytes(),
     );
     let (_, _, scene) = imported(&parts);
-    assert_eq!(scene.pages[0].background, Color(32, 64, 96, 255));
+    assert_eq!(scene.pages[0].background.fill, Color(32, 64, 96, 255));
     let mut r = resources();
     let mut bytes = Cursor::new(Vec::new());
     image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(

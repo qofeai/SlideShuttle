@@ -510,7 +510,30 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
             }
         }
         let mut problems = Problems::new();
-        let bg = styles.background(&mut problems);
+        // A slide's own picture background becomes url(<asset>); inherited ones stay losses.
+        let picture = desc(root, P, "bg")
+            .and_then(|bg| child(bg, P, "bgPr"))
+            .and_then(|pr| child(pr, A, "blipFill"))
+            .and_then(|fill| {
+                let bytes = child(fill, A, "blip")
+                    .and_then(|b| b.attribute((R, "embed")))
+                    .and_then(|id| r.get(id))
+                    .and_then(|path| entries.get(path))?;
+                let (w, h) = crate::render::image_size(bytes).ok()?;
+                let page_ratio = width as f64 / height as f64;
+                if child(fill, A, "srcRect").is_none()
+                    && ((w as f64 / h as f64) / page_ratio - 1.0).abs() > 0.01
+                {
+                    problems.insert("stretched background image is drawn cropped to cover".into());
+                }
+                let asset = format!("media/{}.png", digest(bytes));
+                reader.assets.insert(asset.clone(), bytes.clone());
+                Some(format!("url({asset})"))
+            });
+        let bg = match picture {
+            Some(url) => url,
+            None => styles.background(&mut problems),
+        };
         for reason in problems {
             reader.losses.push(Loss {
                 page: page.clone(),
@@ -687,13 +710,16 @@ impl Reader<'_> {
             if xf.is_none() {
                 self.loss(page, &name, "missing effective geometry");
             }
-            if xf.is_some_and(|x| {
-                x.attribute("rot").is_some_and(|v| v != "0")
-                    || x.attribute("flipH") == Some("1")
-                    || x.attribute("flipV") == Some("1")
-            }) {
-                self.loss(page, &name, "rotation/flip is not reconstructed");
-            }
+            let rot = xf
+                .and_then(|x| x.attribute("rot"))
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 60000.0;
+            let flip = |k| {
+                xf.and_then(|x| x.attribute(k))
+                    .is_some_and(|v| v == "1" || v == "true")
+            };
+            let turned = rot != 0.0 || flip("flipH") || flip("flipV");
             let raw_text = plain(n);
             let text = if tag == "grpSp" {
                 String::new()
@@ -716,16 +742,23 @@ impl Reader<'_> {
                 payload,
                 native_digest,
             });
-            for feature in ["gradFill", "effectLst", "effectDag", "blip", "prstDash"] {
+            // The shape's own fill, line and effects are rebuilt by the style resolver.
+            let own = |x: X<'_, '_>| {
+                x.parent().is_some_and(|p| {
+                    p.has_tag_name((P, "spPr")) && p.parent() == Some(n)
+                        || p.has_tag_name((A, "ln"))
+                            && p.parent().and_then(|q| q.parent()) == Some(n)
+                })
+            };
+            for feature in ["gradFill", "effectDag", "blip"] {
                 let unsupported = n.descendants().any(|x| {
                     x.has_tag_name((A, feature))
                         && match feature {
-                            "gradFill" | "effectDag" => true,
-                            "effectLst" => x.children().any(|c| c.is_element()),
+                            "gradFill" => !own(x),
+                            "effectDag" => true,
                             "blip" => x
                                 .children()
                                 .any(|c| c.is_element() && !c.has_tag_name((A, "alphaModFix"))),
-                            "prstDash" => x.attribute("val") != Some("solid"),
                             _ => false,
                         }
                 });
@@ -765,7 +798,42 @@ impl Reader<'_> {
                 geometry[2].max(0),
                 geometry[3].max(0)
             );
+            let mut props = props;
+            let has_text = !text.trim().is_empty();
+            let boxed = props["fill"]
+                .as_str()
+                .is_some_and(|f| f.len() == 6 || !f.ends_with("00"))
+                || props["gradient"].is_string()
+                || props["strokeWidth"].as_u64().is_some_and(|w| w > 0);
+            if let Some(obj) = props.as_object_mut() {
+                if tag == "graphicFrame" {
+                    for (key, what) in [("gradient", "gradient"), ("shadow", "shadow")] {
+                        if obj.remove(key).is_some() {
+                            self.loss(
+                                page,
+                                &name,
+                                format!("table/chart {what} is not reconstructed"),
+                            );
+                        }
+                    }
+                }
+                if has_text && !boxed && obj.remove("shadow").is_some() {
+                    self.loss(page, &name, "text shadow is not reconstructed");
+                }
+            }
             let mut css = style_css(&props, false);
+            if turned {
+                if tag == "grpSp" || tag == "graphicFrame" || has_text && boxed {
+                    self.loss(page, &name, "rotation/flip is not reconstructed");
+                } else {
+                    css.push_str(&format!(
+                        ";transform:rotate({}deg){}{}",
+                        (rot * 100.0).round() / 100.0,
+                        if flip("flipH") { " scaleX(-1)" } else { "" },
+                        if flip("flipV") { " scaleY(-1)" } else { "" }
+                    ));
+                }
+            }
             if let Some(geom) = desc(n, A, "prstGeom")
                 && geom.attribute("prst") == Some("roundRect")
             {
@@ -881,9 +949,16 @@ impl Reader<'_> {
                                 problems.insert("invalid image alphaModFix".into());
                             }
                         }
+                        // A picture keeps its transform and shadow; fill and border do not apply.
+                        let kept = css
+                            .split(';')
+                            .filter(|d| d.starts_with("transform:") || d.starts_with("box-shadow:"))
+                            .map(|d| format!(";{d}"))
+                            .collect::<String>();
                         format!(
-                            "<Image id=\"{import_id}\" src=\"{}\" style=\"{pos};object-fit:fill;opacity:{opacity}\"/>",
-                            xml(&asset)
+                            "<Image id=\"{import_id}\" src=\"{}\" style=\"{pos};object-fit:fill;opacity:{opacity}{}\"/>",
+                            xml(&asset),
+                            xml(&kept)
                         )
                     } else {
                         self.loss(page, name, "missing image payload");
@@ -1097,18 +1172,24 @@ impl Reader<'_> {
                     "rect"
                 }
             };
+            let ends = if shape == "line" {
+                markers(props)
+            } else {
+                String::new()
+            };
             format!(
-                "<Shape id=\"{import_id}\" shape=\"{shape}\" style=\"{pos};{}\"/>",
+                "<Shape id=\"{import_id}\" shape=\"{shape}\" style=\"{pos};{}{ends}\"/>",
                 xml(css)
             )
         } else if let Some(custom) = desc(n, A, "custGeom") {
             if let Some((data, vb)) = custom_path(custom) {
                 format!(
-                    "<Path id=\"{import_id}\" d=\"{}\" viewBox=\"{} {}\" style=\"{pos};{}\"/>",
+                    "<Path id=\"{import_id}\" d=\"{}\" viewBox=\"{} {}\" style=\"{pos};{}{}\"/>",
                     xml(&data),
                     vb[0],
                     vb[1],
-                    xml(css)
+                    xml(css),
+                    markers(props)
                 )
             } else {
                 self.loss(page, name, "custom path needs unsupported guide evaluation");
@@ -1177,6 +1258,16 @@ fn style_css(p: &Value, span: bool) -> String {
             _ => "left",
         };
         css.push(format!("text-align:{a}"));
+    }
+    if let Some(gradient) = p["gradient"].as_str() {
+        css.retain(|d| !d.starts_with("background-color:"));
+        css.push(format!("background:{gradient}"));
+    }
+    if let Some(shadow) = p["shadow"].as_str() {
+        css.push(format!("box-shadow:{shadow}"));
+    }
+    if let Some(dash) = p["dash"].as_str() {
+        css.push(format!("border-style:{dash}"));
     }
     let underline = p["underline"].as_bool();
     let strike = p["strike"].as_bool();
@@ -1374,4 +1465,11 @@ fn text_align(algn: &str) -> &'static str {
         "just" => "justify",
         _ => "left",
     }
+}
+/// Line-end markers; only lines and paths can carry them.
+fn markers(p: &Value) -> String {
+    [("markerStart", "marker-start"), ("markerEnd", "marker-end")]
+        .iter()
+        .filter_map(|(k, css)| p[*k].as_str().map(|m| format!(";{css}:{m}")))
+        .collect()
 }
