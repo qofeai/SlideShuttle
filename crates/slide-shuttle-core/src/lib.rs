@@ -1,5 +1,6 @@
 //! Independent declarative presentation engine. Resources are supplied as bytes.
 pub mod baseline;
+mod chart;
 pub mod compiler;
 mod font_fallback;
 pub mod icon;

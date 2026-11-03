@@ -55,7 +55,7 @@
       <Text id="data/label" style="height:28px;font-size:16px;line-height:26px;color:var(--accent)">DATA, NOT SCREENSHOTS / 保留数据</Text>
       <Text id="data/title" class="title" style="height:66px">同一份数据，连接预览与交付。</Text>
       <Box id="data/content" style="display:grid;grid-template-columns:7fr 5fr;gap:40px;height:360px">
-        <Chart id="data/chart" type="bar" style="height:350px">
+        <Chart id="data/chart" type="bar" data-labels="value" style="height:350px;font-size:16px;color:#536B78">
           <Labels>第一轮|第二轮|第三轮|第四轮</Labels>
           <Series name="示例方案 A" color="#09A88F">28 45 63 82</Series>
           <Series name="示例方案 B" color="#B1D9D1">20 30 48 61</Series>

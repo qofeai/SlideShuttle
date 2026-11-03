@@ -50,7 +50,7 @@
       <Text id="data/kicker" class="kicker">TABLE / LINE CHART / NATIVE OBJECTS</Text>
       <Text id="data/title" class="title">预览保留数值，交付保留对象。</Text>
       <Box id="data/grid" style="display:grid;grid-template-columns:7fr 5fr;gap:32px;height:390px">
-        <Chart id="data/line" type="line" style="height:360px">
+        <Chart id="data/line" type="line" markers="true" style="height:360px;font-size:16px;color:#536B78">
           <Labels>Q1|Q2|Q3|Q4</Labels>
           <Series name="示例序列 A" color="#087E6D">-8 12 18 24</Series>
           <Series name="示例序列 B" color="#1D4ED8">2 8 16 20</Series>
@@ -63,7 +63,7 @@
           <Row><Cell>Q4</Cell><Cell>24</Cell><Cell>20</Cell></Row>
         </Table>
       </Box>
-      <Text id="data/note" style="height:56px;font-size:18px;line-height:28px;color:#536B78">数值仅用于渲染测试。PowerPoint、WPS 和 LibreOffice 会使用各自的图表排版器。</Text>
+      <Text id="data/note" style="height:56px;font-size:18px;line-height:28px;color:#536B78">数值仅用于渲染测试。原生图表固定了绘图区、图例和刻度，文字仍由各应用排版。</Text>
     </Box>
   </Slide>
 </Deck>

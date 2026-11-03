@@ -613,6 +613,9 @@ fn visual(n: &Node, item: &mut Item) -> Result<()> {
             ));
         }
     }
+    if matches!(n.kind, Kind::Chart { .. }) && (item.radius > 0.0 || item.dash != Dash::Solid) {
+        return Err(invalid("a Chart has square corners and a solid border"));
+    }
     if matches!(n.kind, Kind::Table { .. } | Kind::Chart { .. })
         && (item.gradient.is_some()
             || item.opacity != 1.0
@@ -984,26 +987,22 @@ impl Emitter<'_> {
                     },
                 )?
             }
-            Kind::Chart {
-                chart_type,
-                labels,
-                series,
-            } => {
-                let primitives = chart_items(
-                    &item,
-                    *chart_type,
-                    labels,
-                    series,
-                    self.text,
-                    self.page,
-                    self.diagnostics,
-                )?;
-                Draw::Chart {
-                    chart_type: *chart_type,
-                    labels: labels.clone(),
-                    series: series.clone(),
-                    primitives,
+            Kind::Chart(chart) => {
+                let palette = match n.style.get("chart-colors") {
+                    Some(v) => v
+                        .split_whitespace()
+                        .map(Color::parse)
+                        .collect::<Result<Vec<_>>>()?,
+                    None => crate::chart::PALETTE.to_vec(),
+                };
+                if palette.is_empty() {
+                    return Err(invalid("chart-colors lists one or more colors"));
                 }
+                let (page, about) = (self.page, item.clone());
+                let diagnostics = &mut *self.diagnostics;
+                crate::chart::place(&item, chart, &palette, self.text, &mut |code, message| {
+                    diagnostics.push(diag(code, Severity::Error, page, &about, &message))
+                })?
             }
         };
         self.items.push(item);
@@ -1028,202 +1027,4 @@ fn diag(code: &str, severity: Severity, page: &str, item: &Item, message: &str) 
         message: message.into(),
         source: item.source.clone(),
     }
-}
-fn primitive(parent: &Item, id: String, rect: Rect, fill: Color, kind: Draw) -> Item {
-    Item {
-        id,
-        rect,
-        fill,
-        stroke: Color(0, 0, 0, 0),
-        group: parent.group.clone(),
-        kind,
-        text_style: parent.text_style.clone(),
-        source: parent.source.clone(),
-        ..Item::default()
-    }
-}
-fn label(
-    parent: &Item,
-    id: String,
-    rect: Rect,
-    value: &str,
-    size: f32,
-    color: Color,
-    text: &mut TextEngine,
-) -> Result<Item> {
-    let paragraphs = vec![Paragraph::plain(value)];
-    let mut s = parent.text_style.clone();
-    s.size = size;
-    s.line_height = size * 1.35;
-    s.color = color;
-    let mut shaped = text.shape(&paragraphs, &s, Some(rect.width), false)?;
-    shaped.offset(rect.x, rect.y);
-    let mut item = primitive(
-        parent,
-        id,
-        rect,
-        Color(0, 0, 0, 0),
-        Draw::Text {
-            paragraphs,
-            glyphs: shaped.glyphs,
-            marks: shaped.marks,
-            line_count: shaped.lines,
-            export_wrap: false,
-            anchor: VerticalAlign::Top,
-        },
-    );
-    item.text_style = s;
-    Ok(item)
-}
-fn chart_items(
-    parent: &Item,
-    kind: ChartType,
-    labels: &[String],
-    series: &[Series],
-    text: &mut TextEngine,
-    page: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<Vec<Item>> {
-    let mut out = Vec::new();
-    let r = parent.rect;
-    let plot = Rect {
-        x: r.x + 64.0,
-        y: r.y + 20.0,
-        width: (r.width - 90.0).max(1.0),
-        height: (r.height - 88.0).max(1.0),
-    };
-    let min = series
-        .iter()
-        .flat_map(|s| s.values.iter().copied())
-        .fold(0.0f64, f64::min);
-    let max = series
-        .iter()
-        .flat_map(|s| s.values.iter().copied())
-        .fold(0.0f64, f64::max);
-    let range = (max - min).max(1.0);
-    let y = |v: f64| plot.bottom() - ((v - min) / range) as f32 * plot.height;
-    for i in 0..=4 {
-        let v = min + range * i as f64 / 4.0;
-        let yy = y(v);
-        out.push(primitive(
-            parent,
-            format!("{}/grid/{i}", parent.id),
-            Rect {
-                x: plot.x,
-                y: yy,
-                width: plot.width,
-                height: 1.0,
-            },
-            Color(223, 229, 237, 255),
-            Draw::Box,
-        ));
-        out.push(label(
-            parent,
-            format!("{}/tick/{i}", parent.id),
-            Rect {
-                x: r.x,
-                y: yy - 10.0,
-                width: 58.0,
-                height: 24.0,
-            },
-            &format!("{v:.0}"),
-            14.0,
-            Color(90, 103, 122, 255),
-            text,
-        )?);
-    }
-    let slot = plot.width / labels.len() as f32;
-    for (i, l) in labels.iter().enumerate() {
-        out.push(label(
-            parent,
-            format!("{}/label/{i}", parent.id),
-            Rect {
-                x: plot.x + i as f32 * slot,
-                y: plot.bottom() + 8.0,
-                width: slot,
-                height: 24.0,
-            },
-            l,
-            14.0,
-            Color(90, 103, 122, 255),
-            text,
-        )?);
-    }
-    for (si, s) in series.iter().enumerate() {
-        let color = Color::parse(&s.color)?;
-        if kind == ChartType::Bar {
-            for (i, v) in s.values.iter().enumerate() {
-                let bw = slot * 0.7 / series.len() as f32;
-                let a = y(*v);
-                let zero = y(0.0);
-                out.push(primitive(
-                    parent,
-                    format!("{}/bar/{si}/{i}", parent.id),
-                    Rect {
-                        x: plot.x + i as f32 * slot + slot * 0.15 + si as f32 * bw,
-                        y: a.min(zero),
-                        width: (bw - 3.0).max(1.0),
-                        height: (zero - a).abs(),
-                    },
-                    color,
-                    Draw::Box,
-                ));
-            }
-        } else {
-            let mut d = String::new();
-            for (i, v) in s.values.iter().enumerate() {
-                d.push_str(&format!(
-                    "{} {} {} ",
-                    if i == 0 { "M" } else { "L" },
-                    (i as f32 + 0.5) * slot,
-                    (y(*v) - plot.y)
-                ));
-            }
-            let mut path = primitive(
-                parent,
-                format!("{}/line/{si}", parent.id),
-                plot,
-                Color(0, 0, 0, 0),
-                Draw::Path {
-                    data: d,
-                    view_box: [plot.width, plot.height],
-                },
-            );
-            path.stroke = color;
-            path.stroke_width = 3.0;
-            out.push(path);
-        }
-        out.push(label(
-            parent,
-            format!("{}/legend/{si}", parent.id),
-            Rect {
-                x: plot.x + si as f32 * 160.0,
-                y: r.bottom() - 28.0,
-                width: 155.0,
-                height: 26.0,
-            },
-            &s.name,
-            14.0,
-            color,
-            text,
-        )?);
-    }
-    // Labels never wrap, so a glyph outside its slot or the chart is clipped content.
-    for item in &out {
-        if let Draw::Text { glyphs, .. } = &item.kind
-            && glyphs.iter().any(|g| {
-                g.x < item.rect.x.max(r.x) - 0.5
-                    || g.x + g.advance > item.rect.right().min(r.right()) + 0.5
-            })
-        {
-            diagnostics.push(diag(
-                "chart_label_overflow",
-                Severity::Error,
-                page,
-                item,
-                "chart tick, category label or legend does not fit inside the chart",
-            ));
-        }
-    }
-    Ok(out)
 }
