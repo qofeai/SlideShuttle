@@ -1,0 +1,19 @@
+<Slide id="structure" background="#F4F1E9">
+  <Box id="frame" class="frame">
+    <Text id="kicker" class="kicker">01 / CONTENT BECOMES AN ARGUMENT</Text>
+    <Text id="title" class="heading">先决定讲什么，再决定怎么摆。</Text>
+    <Box id="grid" style="display:grid;grid-template-columns:5fr 7fr;gap:64px;height:396px">
+      <Box id="lead" style="display:flex;flex-direction:column;gap:16px">
+        <Text id="number" style="height:136px;font-size:112px;line-height:132px;font-weight:700;color:var(--accent)">01</Text>
+        <Text id="statement" style="height:96px;font-size:32px;line-height:44px;font-weight:700;color:var(--ink)">把一页长文，<br/>变成一个清楚的判断。</Text>
+        <Text id="summary" style="height:100px;font-size:22px;line-height:34px;color:#536B78">观点、证据和下一步，<br/>共同决定页面的阅读顺序。</Text>
+      </Box>
+      <Box id="arguments" style="display:flex;flex-direction:column;gap:20px">
+        <Use id="claim" component="Argument" number="A" title="标题提出观点" copy="让观众知道这一页希望解释什么，而不是只有一个抽象主题词。"/>
+        <Use id="evidence" component="Argument" number="B" title="主体支撑判断" copy="用图表、对照或关系图表达证据，把主要空间留给最有用的信息。"/>
+        <Use id="action" component="Argument" number="C" title="结尾连接下一步" copy="给出含义、取舍或行动，让页面之间形成可以跟随的叙事。"/>
+      </Box>
+    </Box>
+    <Text id="note" style="height:50px;font-size:18px;line-height:30px;color:#677B82">编号列表用于有序论证，其他内容可以选用更适合其关系的构图。</Text>
+  </Box>
+</Slide>

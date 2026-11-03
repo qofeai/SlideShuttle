@@ -48,6 +48,6 @@ fuzz_target!(|slide: &[u8]| {
     }
     let package = writer.finish().unwrap().into_inner();
     if let Ok(imported) = import_pptx(&package) {
-        let _ = slide_shuttle_core::parse(&imported.xml);
+        let _ = slide_shuttle_core::parse_files("deck.xml", &imported.files);
     }
 });

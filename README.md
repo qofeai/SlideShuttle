@@ -116,6 +116,8 @@ deck.free();
 engine.free();
 ```
 
+多文件项目用 `engine.compileProject('deck.xml', JSON.stringify({ 'deck.xml': …, 'pages/01-cover.xml': … }))`；`importPptx` 返回 `{ entry, files, snapshot }`，可直接交给 `compileProject`。预览器可选择整个项目文件夹，并在源码面板逐个编辑文件。
+
 `CompiledDeck` 持有不可变的资源和布局快照。翻页不重新排版；最多缓存 8 个“页码 + 缩放”PNG，总编码字节不超过 32 MiB。同一 Engine 修改源文件时复用字体系统；修改字体/图片后重建编译器，旧文档仍然有效，需主动 `.free()`。原有 source-based 方法保留，复用最近一次相同源码的编译结果。缓存上限不是 WASM 总内存上限。
 
 本地 [WASM 预览器](examples/wasm-preview.html) 支持 XML / 有限 PPTX 导入、翻页、源文件修改、诊断与损失查看、PNG/PDF 下载和自创稿 PPTX 导出。构建 web bindings 并下载内置字体后启动：

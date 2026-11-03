@@ -1,0 +1,8 @@
+<Deck title="从内容到一份清晰的演示" width="1280px" height="720px" font-family="Noto Sans CJK SC">
+  <Library src="design.xml"/>
+  <Slide src="pages/01-cover.xml"/>
+  <Slide src="pages/02-structure.xml"/>
+  <Slide src="pages/03-evidence.xml"/>
+  <Slide src="pages/04-audience.xml"/>
+  <Slide src="pages/05-close.xml"/>
+</Deck>

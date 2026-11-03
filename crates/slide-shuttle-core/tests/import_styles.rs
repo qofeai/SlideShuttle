@@ -75,9 +75,14 @@ fn recolor_theme(parts: &mut BTreeMap<String, Vec<u8>>) {
 }
 fn imported(parts: &BTreeMap<String, Vec<u8>>) -> (import::Imported, Deck, Scene) {
     let imp = import_pptx(&pack(parts)).unwrap();
-    let deck = parse(&imp.xml).unwrap();
+    let deck = parse_files("deck.xml", &imp.files).unwrap();
     let scene = layout(&deck, &resources()).unwrap();
-    assert!(!scene.has_errors(), "{:?}\n{}", scene.diagnostics, imp.xml);
+    assert!(
+        !scene.has_errors(),
+        "{:?}\n{:?}",
+        scene.diagnostics,
+        imp.files
+    );
     (imp, deck, scene)
 }
 fn standard_map(bg: &str) -> String {
@@ -435,7 +440,7 @@ fn inherited_master_background_and_image_opacity_are_rendered() {
     let imp = import_pptx(&bytes).unwrap();
     assert!(imp.snapshot.losses.is_empty(), "{:?}", imp.snapshot.losses);
     r.images = imp.assets;
-    let imported = layout(&parse(&imp.xml).unwrap(), &r).unwrap();
+    let imported = layout(&parse_files("deck.xml", &imp.files).unwrap(), &r).unwrap();
     assert_eq!(imported.pages[0].items[0].opacity, 0.35);
     let image = render::render_png(&imported, 0, &r, 1.0).unwrap();
     let pixel = image::load_from_memory(&image).unwrap().to_rgba8();

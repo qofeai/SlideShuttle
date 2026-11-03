@@ -90,7 +90,7 @@ fn native_render_and_editable_package_are_repeatable() {
         "{:?}",
         imported.snapshot.losses
     );
-    let imported = parse(&imported.xml).unwrap();
+    let imported = parse_files("deck.xml", &imported.files).unwrap();
     assert_eq!(imported.slides.len(), d.slides.len());
     let scene = layout(&imported, &r).unwrap();
     assert!(!scene.has_errors(), "{:?}", scene.diagnostics);
@@ -315,7 +315,7 @@ fn empty_pptx_text_bodies_preserve_lines_shapes_and_paths() {
     parts.insert("ppt/slides/slide1.xml".into(), slide.into_bytes());
     let imported = import::import_pptx(&zip_write(&parts)).unwrap();
     assert_eq!(imported.snapshot.objects.len(), 4);
-    let deck = parse(&imported.xml).unwrap();
+    let deck = parse_files("deck.xml", &imported.files).unwrap();
     let nodes = &deck.slides[0].nodes;
     assert!(matches!(
         &nodes[0].kind,
@@ -362,7 +362,7 @@ fn visible_pptx_text_in_zero_height_objects_still_reports_overflow() {
             .into_bytes(),
     );
     let imported = import::import_pptx(&zip_write(&parts)).unwrap();
-    let deck = parse(&imported.xml).unwrap();
+    let deck = parse_files("deck.xml", &imported.files).unwrap();
     assert!(matches!(&deck.slides[0].nodes[0].kind, Kind::Text { .. }));
     let scene = layout(&deck, &r).unwrap();
     assert!(scene.diagnostics.iter().any(|d| d.code == "text_overflow"));
@@ -431,7 +431,7 @@ fn tables_charts_workbook_and_groups_are_real_objects() {
     let sheet = std::str::from_utf8(&wb["xl/worksheets/sheet1.xml"]).unwrap();
     assert!(sheet.contains("<c r=\"B3\"><v>8</v></c>"));
     let imp = import::import_pptx(&b).unwrap();
-    let d = parse(&imp.xml).unwrap();
+    let d = parse_files("deck.xml", &imp.files).unwrap();
     assert!(!layout(&d, &resources).unwrap().has_errors());
 }
 #[test]

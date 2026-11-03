@@ -308,7 +308,7 @@ fn run(cli: Cli) -> Result<()> {
                 return Err(fail("import output directory already exists"));
             }
             let imported = import_pptx(&io::read(&input, 64 * 1024 * 1024)?)?;
-            let d = parse(&imported.xml)?;
+            let d = parse_files("deck.xml", &imported.files)?;
             let mut r = Resources::default();
             for f in font {
                 r.fonts.push(FontResource {
@@ -321,7 +321,9 @@ fn run(cli: Cli) -> Result<()> {
                 r.images.insert(name.clone(), data.clone());
             }
             let base = Baseline::from_import(d, imported.snapshot.clone(), baseline::profile(&r)?)?;
-            io::write_new(&out.join("deck.xml"), imported.xml.as_bytes())?;
+            for (path, text) in &imported.files {
+                io::write_new(&out.join(path), text.as_bytes())?;
+            }
             io::write_new(
                 &out.join(".slide-shuttle/base.json"),
                 &serde_json::to_vec_pretty(&base)?,

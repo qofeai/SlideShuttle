@@ -1,0 +1,25 @@
+<Slide id="cover" background="#0E2631">
+  <Box id="frame" class="frame" style="gap:20px">
+    <Text id="label" style="height:28px;font-size:16px;line-height:26px;color:#68DBC8">SLIDESHUTTLE    /    NATIVE PRESENTATIONS</Text>
+    <Box id="main" style="display:grid;grid-template-columns:7fr 5fr;gap:50px;height:450px">
+      <Box id="story" style="display:flex;flex-direction:column;justify-content:center;gap:26px">
+        <Text id="title" style="height:176px;font-size:62px;line-height:82px;font-weight:700;color:#FFFFFF">让想法<br/>成为演示。</Text>
+        <Text id="subtitle" style="height:90px;font-size:23px;line-height:36px;color:#AFC7D0">用模型熟悉的编排方式，<br/>生成可以继续修改的 PowerPoint。</Text>
+      </Box>
+      <Group id="illustration" style="height:420px;position:relative">
+        <Box id="back-card" style="position:absolute;left:20px;top:65px;width:365px;height:265px;background:#204552;border-radius:20px"/>
+        <Box id="front-card" style="position:absolute;left:0;top:25px;width:365px;height:265px;background:#F3F8F6;border-radius:20px"/>
+        <Text id="card-title" style="position:absolute;left:28px;top:48px;width:300px;height:40px;font-size:22px;line-height:34px;font-weight:700;color:#142B36">A clear idea. A native slide.</Text>
+        <Shape id="bar-a" style="position:absolute;left:30px;top:171px;width:65px;height:75px;background:#ACE7DC;border-radius:6px"/>
+        <Shape id="bar-b" style="position:absolute;left:117px;top:136px;width:65px;height:110px;background:#58CAB5;border-radius:6px"/>
+        <Shape id="bar-c" style="position:absolute;left:204px;top:100px;width:65px;height:146px;background:#09A88F;border-radius:6px"/>
+        <Path id="arrow" d="M 0 50 C 35 45 50 8 100 0 L 84 1 M 100 0 L 97 17" viewBox="100 60" style="position:absolute;left:210px;top:310px;width:145px;height:80px;border:3px solid #68DBC8"/>
+        <Text id="annotation" style="position:absolute;left:0;top:345px;width:260px;height:38px;font-size:18px;line-height:30px;color:#68DBC8">布局一次，多端输出。</Text>
+      </Group>
+    </Box>
+    <Box id="footer" style="display:flex;justify-content:space-between;height:34px">
+      <Text id="meta" style="width:750px;height:30px;font-size:16px;line-height:26px;color:#83A3B0">Rust · Flex / Grid · CJK shaping · PNG / PDF / PPTX</Text>
+      <Text id="page" style="width:100px;height:30px;font-size:16px;line-height:26px;text-align:right;color:#83A3B0">01 / 03</Text>
+    </Box>
+  </Box>
+</Slide>

@@ -1,0 +1,20 @@
+<Slide id="evidence" background="#FFFFFF">
+  <Box id="frame" class="frame">
+    <Text id="kicker" class="kicker">02 / GIVE EVIDENCE ENOUGH ROOM</Text>
+    <Text id="title" class="heading">让证据占据足够大的位置。</Text>
+    <Box id="grid" style="display:grid;grid-template-columns:7fr 5fr;gap:48px;height:390px">
+      <Chart id="chart" type="bar" style="height:380px">
+        <Labels>阶段一|阶段二|阶段三|阶段四</Labels>
+        <Series name="示例 A" color="#087E6D">24 40 62 80</Series>
+        <Series name="示例 B" color="#9B6B32">18 32 48 64</Series>
+      </Chart>
+      <Box id="caption" style="display:flex;flex-direction:column;gap:18px;padding:12px 0">
+        <Text id="sample" style="height:32px;font-size:18px;line-height:30px;color:var(--accent)">演示数据 / 非真实测量</Text>
+        <Text id="number" style="height:128px;font-size:108px;line-height:128px;font-weight:700;color:var(--ink)">80</Text>
+        <Text id="claim" style="height:84px;font-size:28px;line-height:42px;font-weight:700;color:var(--ink)">解释靠近证据，<br/>重点无需来回寻找。</Text>
+        <Text id="explanation" style="height:64px;font-size:20px;line-height:32px;color:#536B78">用紧邻图表的标注解释含义，<br/>保留单位、范围和必要来源。</Text>
+      </Box>
+    </Box>
+    <Text id="note" style="height:56px;font-size:18px;line-height:28px;color:#677B82">本页数据仅供展示布局，不代表真实测量、业务表现或基准成绩。真实任务应替换为有来源的数据。</Text>
+  </Box>
+</Slide>

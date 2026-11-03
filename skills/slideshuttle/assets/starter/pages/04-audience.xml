@@ -1,0 +1,19 @@
+<Slide id="audience" background="#EEF4F0">
+  <Box id="frame" class="frame">
+    <Text id="kicker" class="kicker">03 / DESIGN FOR THE READING SITUATION</Text>
+    <Text id="title" class="heading">阅读场景决定信息密度。</Text>
+    <Box id="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:32px;height:350px">
+      <Box id="live" style="padding:28px;background:#FFFFFF;display:flex;flex-direction:column;gap:18px">
+        <Shape id="live-rule" style="width:100%;height:4px;background:var(--accent)"/>
+        <Text id="live-title" style="height:48px;font-size:30px;line-height:44px;font-weight:700;color:var(--ink)">当面演示</Text>
+        <Text id="live-body" style="height:172px;font-size:24px;line-height:42px;color:#536B78">突出当下需要理解的观点。<br/>图像与证据承担主要表达。<br/>讲述补充上下文与细节。</Text>
+      </Box>
+      <Box id="read" style="padding:28px;background:#FFFFFF;display:flex;flex-direction:column;gap:18px">
+        <Shape id="read-rule" style="width:100%;height:4px;background:#C8944D"/>
+        <Text id="read-title" style="height:48px;font-size:30px;line-height:44px;font-weight:700;color:var(--ink)">留存阅读</Text>
+        <Text id="read-body" style="height:172px;font-size:24px;line-height:42px;color:#536B78">让论证脱离讲述仍然完整。<br/>提供必要定义、来源与注释。<br/>细节保持清晰的层级。</Text>
+      </Box>
+    </Box>
+    <Text id="note" style="height:76px;font-size:22px;line-height:34px;color:#536B78">同一套字体、颜色与间距可以保持一致；文字量和构图则随阅读任务调整。</Text>
+  </Box>
+</Slide>
