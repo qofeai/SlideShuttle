@@ -233,10 +233,10 @@ fn font_fallback_is_explicit_reported_and_preserves_source_inheritance() {
         .unwrap();
     assert_eq!(item.text_style.family, "DejaVu Sans");
     assert_eq!(item.text_style.weight, 700);
-    let Draw::Text { spans, .. } = &item.kind else {
+    let Draw::Text { paragraphs, .. } = &item.kind else {
         panic!("expected text")
     };
-    assert_eq!(spans[1].style["font-weight"], "400");
+    assert_eq!(paragraphs[0].spans[1].style["font-weight"], "400");
     let bytes = doc.export_pptx().unwrap();
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut slide = String::new();

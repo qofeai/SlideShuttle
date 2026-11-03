@@ -101,7 +101,7 @@ pub enum Kind {
     Box,
     Group,
     Text {
-        spans: Vec<Span>,
+        paragraphs: Vec<Paragraph>,
     },
     Image {
         src: String,
@@ -144,6 +144,29 @@ pub enum Align {
     Right,
     Justify,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerticalAlign {
+    #[default]
+    Top,
+    Middle,
+    Bottom,
+}
+#[derive(Clone, Debug)]
+pub struct TextMark {
+    pub rect: Rect,
+    pub color: Color,
+    pub kind: MarkKind,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum MarkKind {
+    /// Painted behind the glyphs.
+    Highlight,
+    /// Underline or strikethrough, painted over the glyphs.
+    Line,
+    /// Clickable area of a link; not painted.
+    Link(String),
+}
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -155,10 +178,43 @@ pub(crate) fn keyword<T: serde::de::DeserializeOwned>(value: &str, what: &str) -
     serde_json::from_value(serde_json::Value::String(value.into()))
         .map_err(|e| invalid(format!("{what}: {e}")))
 }
+/// One paragraph of a Text: inline spans, paragraph style (`text-align`, `margin-top`)
+/// and an optional list marker.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Paragraph {
+    pub spans: Vec<Span>,
+    pub style: Css,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListMarker>,
+}
+impl Paragraph {
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            spans: vec![Span {
+                text: text.into(),
+                style: Css::new(),
+                href: None,
+            }],
+            style: Css::new(),
+            list: None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ListMarker {
+    pub ordered: bool,
+    /// Nesting depth, 0 for a top-level item.
+    pub level: u8,
+    /// Item number for ordered lists.
+    pub number: u32,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Span {
     pub text: String,
     pub style: Css,
+    /// External link target (http, https or mailto).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Series {
@@ -265,6 +321,10 @@ pub struct TextStyle {
     pub italic: bool,
     pub color: Color,
     pub align: Align,
+    /// Extra space after each character, in px.
+    pub letter_spacing: f32,
+    pub underline: bool,
+    pub strike: bool,
 }
 impl Default for TextStyle {
     fn default() -> Self {
@@ -276,6 +336,9 @@ impl Default for TextStyle {
             italic: false,
             color: Color::BLACK,
             align: Align::Left,
+            letter_spacing: 0.0,
+            underline: false,
+            strike: false,
         }
     }
 }
@@ -331,11 +394,14 @@ pub enum Draw {
         view_box: [f32; 2],
     },
     Text {
-        spans: Vec<Span>,
+        paragraphs: Vec<Paragraph>,
         glyphs: Vec<PositionedGlyph>,
+        /// Highlights, decoration lines and link areas, in page coordinates.
+        marks: Vec<TextMark>,
         line_count: usize,
         /// Whether another layout engine may insert soft line breaks.
         export_wrap: bool,
+        anchor: VerticalAlign,
     },
     Image {
         src: String,

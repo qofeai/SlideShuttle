@@ -60,7 +60,24 @@ const PROPS: &[&str] = &[
     "object-fit",
     "box-sizing",
     "white-space",
+    "letter-spacing",
+    "text-decoration",
+    "vertical-align",
 ];
+/// Properties a `Span` or `A` may set; `background` (from `background-color`) is a highlight.
+const SPAN_PROPS: &[&str] = &[
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "line-height",
+    "color",
+    "letter-spacing",
+    "text-decoration",
+    "vertical-align",
+    "background",
+];
+const PARAGRAPH_PROPS: &[&str] = &["text-align", "margin-top"];
 
 /// Parse a self-contained source string; `<Library src>` and `<Slide src>` need [`parse_project`].
 pub fn parse(source: &str) -> Result<Deck> {
@@ -559,7 +576,7 @@ impl<'a> Context<'a> {
             "Box" => Kind::Box,
             "Group" => Kind::Group,
             "Text" => Kind::Text {
-                spans: self.spans(n, params)?,
+                paragraphs: self.paragraphs(n, params)?,
             },
             "Image" => Kind::Image {
                 src: substitute(required(n, "src")?, params)?,
@@ -704,57 +721,212 @@ impl<'a> Context<'a> {
             source: self.source(n),
         })
     }
-    fn spans(&self, n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<Vec<Span>> {
+    /// A Text holds either inline content (one paragraph) or only `<P>` and `<List>` blocks.
+    fn paragraphs(
+        &self,
+        n: X<'_, '_>,
+        params: &BTreeMap<String, String>,
+    ) -> Result<Vec<Paragraph>> {
+        let blocks = n
+            .children()
+            .any(|c| c.is_element() && ["P", "List"].contains(&c.tag_name().name()));
+        if !blocks {
+            return Ok(vec![Paragraph {
+                spans: self.inline(n, params)?,
+                style: Css::new(),
+                list: None,
+            }]);
+        }
+        let mut out = Vec::new();
+        for c in n.children() {
+            if c.is_text() && !c.text().unwrap_or("").trim().is_empty() {
+                return Err(invalid("text beside <P> or <List> must be inside a <P>"));
+            }
+            if !c.is_element() {
+                continue;
+            }
+            match c.tag_name().name() {
+                "P" => {
+                    attrs(c, &["style"])?;
+                    out.push(Paragraph {
+                        spans: self.inline(c, params)?,
+                        style: self.block_style(c, params)?,
+                        list: None,
+                    });
+                }
+                "List" => self.list(c, params, 0, &mut out)?,
+                other => {
+                    return Err(invalid(format!(
+                        "<{other}> cannot sit beside <P> or <List>; wrap inline content in <P>"
+                    )));
+                }
+            }
+        }
+        Ok(out)
+    }
+    fn block_style(&self, n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<Css> {
+        let style = self.css(&substitute(n.attribute("style").unwrap_or(""), params)?)?;
+        if style.keys().any(|k| !PARAGRAPH_PROPS.contains(&k.as_str())) {
+            return Err(invalid(format!(
+                "<{}> style accepts only text-align and margin-top",
+                n.tag_name().name()
+            )));
+        }
+        Ok(style)
+    }
+    /// Flattens a list into one paragraph per item; nested lists follow their item.
+    fn list(
+        &self,
+        n: X<'_, '_>,
+        params: &BTreeMap<String, String>,
+        level: u8,
+        out: &mut Vec<Paragraph>,
+    ) -> Result<()> {
+        attrs(n, &["type", "start", "style"])?;
+        if level > 4 {
+            return Err(invalid("lists nest at most 5 levels"));
+        }
+        let ordered = match n.attribute("type").unwrap_or("bullet") {
+            "bullet" => false,
+            "number" => true,
+            other => {
+                return Err(invalid(format!(
+                    "List type is bullet or number, not {other}"
+                )));
+            }
+        };
+        let mut number = n
+            .attribute("start")
+            .map(|v| v.parse::<u32>().ok().filter(|v| (1..=9999).contains(v)))
+            .unwrap_or(Some(1))
+            .ok_or_else(|| invalid("List start must be 1–9999"))?;
+        let mut style = self.block_style(n, params)?;
+        // A list's margin-top separates the list from what precedes it, not each item.
+        let mut before = style.remove("margin-top");
+        for item in n.children() {
+            if item.is_text() && !item.text().unwrap_or("").trim().is_empty() {
+                return Err(invalid("List text must be inside <Item>"));
+            }
+            if !item.is_element() {
+                continue;
+            }
+            if item.tag_name().name() != "Item" {
+                return Err(invalid("List children must be <Item>"));
+            }
+            attrs(item, &["style"])?;
+            let mut item_style = style.clone();
+            if let Some(margin) = before.take() {
+                item_style.insert("margin-top".into(), margin);
+            }
+            item_style.extend(self.block_style(item, params)?);
+            out.push(Paragraph {
+                spans: self.inline(item, params)?,
+                style: item_style,
+                list: Some(ListMarker {
+                    ordered,
+                    level,
+                    number,
+                }),
+            });
+            number += 1;
+            for nested in item
+                .children()
+                .filter(|c| c.is_element() && c.tag_name().name() == "List")
+            {
+                self.list(nested, params, level + 1, out)?;
+            }
+        }
+        Ok(())
+    }
+    /// Inline content: text, `<Span>`, `<A>` and `<br/>`. A nested `<List>` belongs to the
+    /// enclosing `<Item>` and is read by [`Self::list`].
+    fn inline(&self, n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<Vec<Span>> {
+        let span = |text: String, style: Css, href: Option<String>| Span { text, style, href };
         let mut out = Vec::new();
         for c in n.children() {
             if c.is_text() {
-                out.push(Span {
-                    text: substitute(c.text().unwrap_or(""), params)?,
-                    style: Css::new(),
-                });
+                out.push(span(
+                    substitute(c.text().unwrap_or(""), params)?,
+                    Css::new(),
+                    None,
+                ));
             } else if c.is_element() {
                 match c.tag_name().name() {
                     "br" => {
                         attrs(c, &[])?;
-                        out.push(Span {
-                            text: "\n".into(),
-                            style: Css::new(),
-                        });
+                        out.push(span("\n".into(), Css::new(), None));
                     }
-                    "Span" => {
-                        attrs(c, &["style"])?;
+                    "Span" | "A" => {
+                        let link = c.tag_name().name() == "A";
+                        attrs(c, if link { &["href", "style"] } else { &["style"] })?;
                         if c.children().any(|n| n.is_element()) {
-                            return Err(invalid("Span does not nest elements; use adjacent spans"));
+                            return Err(invalid(
+                                "Span and A do not nest elements; use adjacent spans",
+                            ));
                         }
-                        let style = self.css(c.attribute("style").unwrap_or(""))?;
-                        if style.keys().any(|k| {
-                            ![
-                                "font-family",
-                                "font-size",
-                                "font-weight",
-                                "font-style",
-                                "line-height",
-                                "color",
-                            ]
-                            .contains(&k.as_str())
-                        }) {
-                            return Err(invalid("Span accepts text style properties only"));
+                        let mut style =
+                            self.css(&substitute(c.attribute("style").unwrap_or(""), params)?)?;
+                        if style.keys().any(|k| !SPAN_PROPS.contains(&k.as_str())) {
+                            return Err(invalid("Span and A accept text style properties only"));
                         }
-                        out.push(Span {
-                            text: substitute(&plain(c), params)?,
-                            style,
-                        });
+                        let href = if link {
+                            if style.contains_key("color") || style.contains_key("text-decoration")
+                            {
+                                return Err(invalid(
+                                    "links use the theme link color and underline; A cannot set color or text-decoration",
+                                ));
+                            }
+                            style.insert("color".into(), LINK_COLOR.into());
+                            style.insert("text-decoration".into(), "underline".into());
+                            Some(link_target(&substitute(required(c, "href")?, params)?)?)
+                        } else {
+                            None
+                        };
+                        out.push(span(substitute(&plain(c), params)?, style, href));
                     }
+                    "List" if n.tag_name().name() == "Item" => {}
                     other => return Err(invalid(format!("unsupported rich-text tag {other}"))),
                 }
             }
         }
-        // XML formatting indentation around a multi-line Text is not visual content.
-        if out.len() == 1 && out[0].text.starts_with('\n') {
-            out[0].text = out[0].text.trim().to_owned();
+        // Source line breaks and indentation around the content are formatting, not text.
+        let formatting = |s: &str| s.contains('\n') && s.trim().is_empty();
+        if let Some(first) = out.first_mut() {
+            let lead = first.text.len() - first.text.trim_start().len();
+            if formatting(&first.text[..lead]) {
+                first.text.drain(..lead);
+            }
+        }
+        // Trailing formatting may span several text nodes, e.g. before a nested <List>.
+        while let Some(last) = out.last_mut() {
+            let kept = last.text.trim_end().len();
+            if formatting(&last.text[kept..]) {
+                last.text.truncate(kept);
+            }
+            if last.text.is_empty() && out.len() > 1 {
+                out.pop();
+            } else {
+                break;
+            }
         }
         Ok(out)
     }
+}
+/// The PPTX theme's hyperlink color; Office paints links with it.
+pub(crate) const LINK_COLOR: &str = "#2563EB";
+pub(crate) fn link_target(href: &str) -> Result<String> {
+    let lower = href.to_ascii_lowercase();
+    if href.len() > 2048
+        || href.chars().any(char::is_whitespace)
+        || !["https://", "http://", "mailto:"]
+            .iter()
+            .any(|scheme| lower.starts_with(scheme) && lower.len() > scheme.len())
+    {
+        return Err(invalid(format!(
+            "link href must be an http, https or mailto address: {href}"
+        )));
+    }
+    Ok(href.into())
 }
 /// Stores only longhands, so a later declaration overrides an earlier one as in CSS.
 fn declare(map: &mut Css, k: &str, v: &str) -> Result<()> {

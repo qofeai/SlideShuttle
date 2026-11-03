@@ -71,6 +71,25 @@ pub(crate) fn item_path(item: &Item) -> Result<Vec<Command>> {
         Command::Z,
     ])
 }
+fn rect_commands(r: Rect) -> [Command; 5] {
+    [
+        Command::M(r.x, r.y),
+        Command::L(r.right(), r.y),
+        Command::L(r.right(), r.bottom()),
+        Command::L(r.x, r.bottom()),
+        Command::Z,
+    ]
+}
+/// Highlights go under the glyphs, decoration lines over them; link areas are not painted.
+fn painted(marks: &[TextMark], under: bool) -> impl Iterator<Item = &TextMark> {
+    marks.iter().filter(move |m| {
+        if under {
+            m.kind == MarkKind::Highlight
+        } else {
+            m.kind == MarkKind::Line
+        }
+    })
+}
 fn skia_path(commands: &[Command]) -> Option<tiny_skia::Path> {
     let mut b = tiny_skia::PathBuilder::new();
     for c in commands {
@@ -259,7 +278,21 @@ fn paint_png<'r>(
         }
     }
     match &item.kind {
-        Draw::Text { glyphs, .. } => {
+        Draw::Text { glyphs, marks, .. } => {
+            let fill_marks = |pixmap: &mut tiny_skia::Pixmap, under: bool| {
+                for m in painted(marks, under) {
+                    if let Some(path) = skia_path(&rect_commands(m.rect)) {
+                        pixmap.fill_path(
+                            &path,
+                            &paint(m.color, item.opacity),
+                            tiny_skia::FillRule::Winding,
+                            transform,
+                            None,
+                        );
+                    }
+                }
+            };
+            fill_marks(pixmap, true);
             for g in glyphs {
                 let face = match faces.entry((g.font, g.font_index)) {
                     Entry::Occupied(e) => e.into_mut(),
@@ -288,6 +321,7 @@ fn paint_png<'r>(
                     );
                 }
             }
+            fill_marks(pixmap, false);
         }
         Draw::Image { src, fit } => {
             let bytes = resources
@@ -421,12 +455,32 @@ pub fn render_pdf(scene: &Scene, resources: &Resources) -> Result<Vec<u8>> {
             text_style: TextStyle::default(),
             source: None,
         };
-        paint_pdf(&bg, &mut surface, resources, &mut font_cache)?;
+        let mut links = Vec::new();
+        paint_pdf(&bg, &mut surface, resources, &mut font_cache, &mut links)?;
         for item in &page.items {
-            paint_pdf(item, &mut surface, resources, &mut font_cache)?;
+            paint_pdf(item, &mut surface, resources, &mut font_cache, &mut links)?;
         }
         surface.pop();
         surface.finish();
+        for (r, href) in links {
+            // Annotations use page coordinates: 1px = 0.75pt.
+            if let Some(rect) = krilla::geom::Rect::from_xywh(
+                r.x * 0.75,
+                r.y * 0.75,
+                r.width * 0.75,
+                r.height * 0.75,
+            ) {
+                p.add_annotation(krilla::annotation::Annotation::new_link(
+                    krilla::annotation::LinkAnnotation::new(
+                        rect,
+                        krilla::annotation::Target::Action(
+                            krilla::action::LinkAction::new(href).into(),
+                        ),
+                    ),
+                    None,
+                ));
+            }
+        }
         p.finish();
     }
     doc.finish()
@@ -444,6 +498,7 @@ fn paint_pdf(
     surface: &mut krilla::surface::Surface,
     resources: &Resources,
     fonts: &mut BTreeMap<(usize, u32), krilla::text::Font>,
+    links: &mut Vec<(Rect, String)>,
 ) -> Result<()> {
     surface.set_fill(if item.fill.3 > 0 {
         Some(pdf_fill(item.fill, item.opacity))
@@ -493,8 +548,22 @@ fn paint_pdf(
         surface.draw_path(&path);
     }
     match &item.kind {
-        Draw::Text { glyphs, .. } => {
+        Draw::Text { glyphs, marks, .. } => {
             surface.set_stroke(None);
+            let fill_marks = |surface: &mut krilla::surface::Surface, under: bool| {
+                for m in painted(marks, under) {
+                    if let Some(path) = pdf_path(&rect_commands(m.rect)) {
+                        surface.set_fill(Some(pdf_fill(m.color, item.opacity)));
+                        surface.draw_path(&path);
+                    }
+                }
+            };
+            fill_marks(surface, true);
+            for m in marks {
+                if let MarkKind::Link(href) = &m.kind {
+                    links.push((m.rect, href.clone()));
+                }
+            }
             for g in glyphs {
                 let font = match fonts.entry((g.font, g.font_index)) {
                     Entry::Occupied(e) => e.get().clone(),
@@ -527,6 +596,7 @@ fn paint_pdf(
                     false,
                 );
             }
+            fill_marks(surface, false);
         }
         Draw::Image { src, fit } => {
             let data = resources
@@ -561,12 +631,12 @@ fn paint_pdf(
         }
         Draw::Table { cells, .. } => {
             for cell in cells {
-                paint_pdf(cell, surface, resources, fonts)?;
+                paint_pdf(cell, surface, resources, fonts, links)?;
             }
         }
         Draw::Chart { primitives, .. } => {
             for p in primitives {
-                paint_pdf(p, surface, resources, fonts)?;
+                paint_pdf(p, surface, resources, fonts, links)?;
             }
         }
         _ => {}

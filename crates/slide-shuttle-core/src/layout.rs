@@ -79,8 +79,8 @@ pub(crate) fn layout_with_text(
                             _ => None,
                         });
                         let (w, h) = match &leaf.kind {
-                            Kind::Text { spans } => {
-                                match text.shape(spans, &leaf.text, width, leaf.wrap) {
+                            Kind::Text { paragraphs } => {
+                                match text.shape(paragraphs, &leaf.text, width, leaf.wrap) {
                                     Ok(s) => (s.width, s.height),
                                     Err(_) => (0.0, leaf.text.line_height),
                                 }
@@ -463,6 +463,11 @@ fn visual(n: &Node) -> Result<(Color, Option<LinearGradient>, Color, f32, f32, f
     if opacity > 1.0 || radius < 0.0 || width < 0.0 {
         return Err(invalid("invalid opacity, radius or border width"));
     }
+    if n.style.contains_key("vertical-align") && !matches!(n.kind, Kind::Text { .. }) {
+        return Err(invalid(
+            "vertical-align (top, middle, bottom) applies to Text",
+        ));
+    }
     if !n.children.is_empty() && opacity != 1.0 {
         return Err(invalid(
             "container opacity is not supported; apply opacity to leaves",
@@ -535,7 +540,7 @@ impl Emitter<'_> {
         item.kind = match &n.kind {
             Kind::Box => Draw::Box,
             Kind::Group => Draw::Group,
-            Kind::Text { spans } => {
+            Kind::Text { paragraphs } => {
                 item.rect = content;
                 // Text padding/background is a separate painted box; text receives the content box.
                 if fill.3 > 0 || stroke_width > 0.0 {
@@ -549,11 +554,15 @@ impl Emitter<'_> {
                     item.stroke_width = 0.0;
                 }
                 let wrap = n.style.get("white-space").is_none_or(|s| s != "nowrap");
-                let mut shaped = self.text.shape(spans, &ts, Some(content.width), wrap)?;
-                let authored_lines = 1 + spans
-                    .iter()
-                    .map(|s| s.text.chars().filter(|c| *c == '\n').count())
-                    .sum::<usize>();
+                let mut shaped = self
+                    .text
+                    .shape(paragraphs, &ts, Some(content.width), wrap)?;
+                let authored_lines = paragraphs.len()
+                    + paragraphs
+                        .iter()
+                        .flat_map(|p| &p.spans)
+                        .map(|s| s.text.chars().filter(|c| *c == '\n').count())
+                        .sum::<usize>();
                 // Intrinsic single-line labels must stay single-line in PPTX. Their
                 // boxes fit our exact font advances; Office engines can differ slightly.
                 // Explicit widths and genuinely wrapped paragraphs retain soft wrapping.
@@ -574,7 +583,7 @@ impl Emitter<'_> {
                     && shaped.height <= content.height + 0.5
                     && self
                         .text
-                        .shape(spans, &ts, Some(content.width * 0.97), wrap)?
+                        .shape(paragraphs, &ts, Some(content.width * 0.97), wrap)?
                         .height
                         > content.height + 0.5
                 {
@@ -586,15 +595,26 @@ impl Emitter<'_> {
                         "text has less than 3% width tolerance",
                     ));
                 }
-                for g in &mut shaped.glyphs {
-                    g.x += content.x;
-                    g.y += content.y;
-                }
+                let anchor: VerticalAlign = n
+                    .style
+                    .get("vertical-align")
+                    .map(|v| keyword(v, "Text vertical-align"))
+                    .transpose()?
+                    .unwrap_or_default();
+                let free = (content.height - shaped.height).max(0.0);
+                let dy = match anchor {
+                    VerticalAlign::Top => 0.0,
+                    VerticalAlign::Middle => free / 2.0,
+                    VerticalAlign::Bottom => free,
+                };
+                shaped.offset(content.x, content.y + dy);
                 Draw::Text {
-                    spans: spans.clone(),
+                    paragraphs: paragraphs.clone(),
                     glyphs: shaped.glyphs,
+                    marks: shaped.marks,
                     line_count: shaped.lines,
                     export_wrap,
+                    anchor,
                 }
             }
             Kind::Image { src } => {
@@ -694,29 +714,25 @@ fn label(
     color: Color,
     text: &mut TextEngine,
 ) -> Result<Item> {
-    let spans = vec![Span {
-        text: value.into(),
-        style: Css::new(),
-    }];
+    let paragraphs = vec![Paragraph::plain(value)];
     let mut s = parent.text_style.clone();
     s.size = size;
     s.line_height = size * 1.35;
     s.color = color;
-    let mut shaped = text.shape(&spans, &s, Some(rect.width), false)?;
-    for g in &mut shaped.glyphs {
-        g.x += rect.x;
-        g.y += rect.y;
-    }
+    let mut shaped = text.shape(&paragraphs, &s, Some(rect.width), false)?;
+    shaped.offset(rect.x, rect.y);
     let mut item = primitive(
         parent,
         id,
         rect,
         Color(0, 0, 0, 0),
         Draw::Text {
-            spans,
+            paragraphs,
             glyphs: shaped.glyphs,
+            marks: shaped.marks,
             line_count: shaped.lines,
             export_wrap: false,
+            anchor: VerticalAlign::Top,
         },
     );
     item.text_style = s;
@@ -763,11 +779,9 @@ fn table_cells(
                 width: (width - 16.0).max(0.0),
                 height: (rh - 12.0).max(0.0),
             };
-            let spans = vec![Span {
-                text: value.clone(),
-                style: Css::new(),
-            }];
-            let mut shape = text.shape(&spans, &parent.text_style, Some(content.width), true)?;
+            let paragraphs = vec![Paragraph::plain(value.clone())];
+            let mut shape =
+                text.shape(&paragraphs, &parent.text_style, Some(content.width), true)?;
             let mut ti = primitive(
                 parent,
                 format!("{}/text/{r}/{c}", parent.id),
@@ -784,15 +798,14 @@ fn table_cells(
                     "cell text exceeds row height",
                 ));
             }
-            for g in &mut shape.glyphs {
-                g.x += content.x;
-                g.y += content.y;
-            }
+            shape.offset(content.x, content.y);
             ti.kind = Draw::Text {
-                spans,
+                paragraphs,
                 glyphs: shape.glyphs,
+                marks: shape.marks,
                 line_count: shape.lines,
                 export_wrap: true,
+                anchor: VerticalAlign::Top,
             };
             cells.push(ti);
             x += width;
