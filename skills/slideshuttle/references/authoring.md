@@ -26,7 +26,8 @@ Slide 使用全稿唯一、稳定的 ASCII 语义 ID；普通节点只需在本�
 |---|---|
 | 布局 | Box；block、Flex、受限 Grid；border-box；显式列宽/比例、gap、padding、margin |
 | 剩余宽度 | flex-grow:1;flex-basis:0;min-width:0，而非 flex:1 简写 |
-| 字体 | 实际存在的 family 与 400/700 字重；Noto CJK 包含常规/粗体，不合成斜体 |
+| 字体 | 实际存在的 family 与 400/700 字重；Noto CJK 包含常规/粗体，不合成斜体；西文与中文用不同字体时写 `font-family:'西文字体', '中文字体'`，两者都要提供 |
+| 文字效果 | `text-align:distribute` 分散对齐；`writing-mode:vertical-rl` 竖排标题；Text 的 `color:linear-gradient(...)` 渐变字；`text-shadow` 字形阴影。克制使用，一页一个焦点 |
 | 图片 | PNG/JPEG、contain/cover/fill 与 object-position；`border-radius:50%` 圆形头像、`shape="hexagon"` 等预设裁剪、border、阴影 |
 | 图标 | `<Icon src="icons/名称.svg" style="width:40px;height:40px;color:#…"/>`；用 `python3 scripts/icons.py 名称… --out 工程/icons` 从 Lucide 复制，`--list 关键词` 查名称 |
 | 矢量图形 | Shape 支持全部 OOXML 预设（箭头、星形、对话气泡、流程图、连接线等，`slide-shuttle shapes` 列出名称与 adjust）；Path 接受完整 SVG 路径语法，viewBox="100 100" 是逻辑宽高 |
@@ -36,7 +37,7 @@ Slide 使用全稿唯一、稳定的 ASCII 语义 ID；普通节点只需在本�
 | 复合对象 | 一层 Group；不要嵌套 Group 或设置组级透明度 |
 | 放映 | Deck `transition="fade"` 统一翻页切换；Slide `type`（cover/contents/section/content/end）；`<Notes>` 写讲稿；`<Animate target effect trigger>` 写在 Slide 末尾，要一起出现的内容放进 Group。每页 1–3 次点击为宜，优先 fade-in、fly-in、wipe-in；用 `render --steps` 检查出场顺序 |
 
-不要使用 React/JS、完整 HTML、CSS 选择器、calc、rem/em、repeat/minmax、box-shadow、滤镜、自动分页等未支持的能力。Span 允许字体、字号、字重、斜体、行高、颜色、字间距、下划线/删除线、上下标和高亮，不承担布局与对齐。Table/Chart/容器没有整体 opacity。新需求先核对语法，再决定用可用构图替代或说明限制。
+不要使用 React/JS、完整 HTML、CSS 选择器、calc、rem/em、repeat/minmax、滤镜、自动分页等未支持的能力。Span 允许字体、字号、字重、斜体、行高、颜色、字间距、下划线/删除线、上下标和高亮，不承担布局与对齐。Table/Chart/容器没有整体 opacity。新需求先核对语法，再决定用可用构图替代或说明限制。
 
 ## 文字测量与列表
 

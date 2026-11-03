@@ -77,11 +77,15 @@ deck/
 | 边线 | `border:1px solid|dashed|dotted #D0D8DE`，或 border-width、border-style、border-color；非负 border-radius。线条与 Path 的 border 是描边，不占布局空间 |
 | 线帽与拐角 | `stroke-linecap: butt / round / square`、`stroke-linejoin: miter / round / bevel`，作用于描边 |
 | 线端 | `marker-start` / `marker-end`：arrow、stealth、diamond、oval、none；只用于 `shape="line"` 与 Path，大小随线宽 |
-| 阴影 | `box-shadow:<x> <y> [<模糊>] <颜色>`（单个外阴影，模糊 0–200px）；作用于形状、图片和有背景或边框的 Text 盒子；PDF 中阴影以图像嵌入 |
+| 阴影 | `box-shadow:<x> <y> [<模糊>] <颜色>`（单个外阴影，模糊 0–200px）；作用于形状、图片和有背景或边框的 Text 盒子；字形阴影用 `text-shadow`；PDF 中阴影以图像嵌入 |
 | 变换 | `transform:rotate(<角度>deg)`、`scaleX(-1)`、`scaleY(-1)`，按 CSS 从右到左组合，绕自身中心，不影响布局；只用于叶子节点，不用于容器、Table、Chart，以及带背景或边框的 Text；越界检查按旋转后的外框 |
 | 透明度 | opacity:0–1，仅叶子绘图对象；Table/Chart/容器不接受 opacity |
 | 图片 | object-fit:contain / cover / fill；object-position 关键字或百分比（默认居中）|
-| 文字 | font-family、font-size、font-weight:400/700、font-style:normal/italic、line-height、color、text-align:left/center/right/justify |
+| 文字 | font-family、font-size、font-weight:400/700、font-style:normal/italic、line-height、color、text-align:left/center/right/justify/distribute |
+| 字体列表 | `font-family:'Inter', 'Noto Sans CJK SC'` 最多 4 个，每个字取第一个含该字的字体；PPTX 中第一个是西文字体（latin），第二个是东亚字体（ea）。列表中的字体都要提供 |
+| 分散对齐 | `text-align:distribute` 让每一行（包括最后一行）在字符之间均匀撑满宽度，常用于中文标题和栏目名 |
+| 竖排 | Text 的 `writing-mode:vertical-rl`：列从右向左排，汉字、假名、全角标点直立并使用字体的竖排字形，西文与数字顺时针侧转，同 Office 的 eaVert；行高即列宽。`vertical-align` 的 top / middle / bottom 依次靠右、居中、靠左。竖排文字不支持列表、链接、装饰线、高亮和上下标 |
+| 文字效果 | Text 的 `color` 可写 `linear-gradient(...)` / `radial-gradient(...)`，渐变铺满整个 Text 框，Span 不能再改颜色；`text-shadow:<x> <y> [<模糊>] <颜色>` 给字形加阴影 |
 | 换行 | white-space:normal / nowrap / pre-wrap；当前 normal 与 pre-wrap 都保留 XML 文本中的空白，不实现浏览器空白折叠 |
 
 字体必须真的包含所请求的字重/斜体 face；不合成。`Span` 只接受 font-family/size/weight/style、line-height、color、letter-spacing、text-decoration、vertical-align（super/sub）与 background-color（高亮）。颜色、字重、字体继承；行高随字号按继承比率变化，显式 line-height 可用长度或倍数。布局使用 f32 并关闭 Taffy 像素取整；PPTX 到最后一步才转换整数 EMU。

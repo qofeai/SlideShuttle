@@ -109,9 +109,12 @@ pub(crate) fn fill(c: Color, opacity: f32) -> String {
     }
 }
 fn item_fill(item: &Item) -> String {
-    let Some(g) = &item.gradient else {
-        return fill(item.fill, item.opacity);
-    };
+    match &item.gradient {
+        Some(g) => gradient_fill(g, item.opacity),
+        None => fill(item.fill, item.opacity),
+    }
+}
+fn gradient_fill(g: &Gradient, opacity: f32) -> String {
     let stops = g
         .stops
         .iter()
@@ -119,7 +122,7 @@ fn item_fill(item: &Item) -> String {
             format!(
                 "<a:gs pos=\"{}\">{}</a:gs>",
                 (at * 100000.0).round() as u32,
-                color(*c, item.opacity)
+                color(*c, opacity)
             )
         })
         .collect::<String>();
@@ -531,14 +534,16 @@ fn write_item(
             paragraphs: content,
             export_wrap,
             anchor,
+            vertical,
             ..
         } => format!(
-            "<p:sp>{}<p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}{}{}</p:spPr><p:txBody><a:bodyPr wrap=\"{}\" lIns=\"0\" rIns=\"0\" tIns=\"0\" bIns=\"0\" anchor=\"{}\"><a:noAutofit/></a:bodyPr><a:lstStyle/>{}</p:txBody></p:sp>",
+            "<p:sp>{}<p:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{}{}{}</p:spPr><p:txBody><a:bodyPr{} wrap=\"{}\" lIns=\"0\" rIns=\"0\" tIns=\"0\" bIns=\"0\" anchor=\"{}\"><a:noAutofit/></a:bodyPr><a:lstStyle/>{}</p:txBody></p:sp>",
             nv(ident, &item.id, true),
             xfrm(item.rect, item.turn),
             item_fill(item),
             stroke(item),
             effects(item),
+            if *vertical { " vert=\"eaVert\"" } else { "" },
             if *export_wrap { "square" } else { "none" },
             match anchor {
                 VerticalAlign::Top => "t",
@@ -689,6 +694,7 @@ pub(crate) fn paragraphs(
             Align::Center => "ctr",
             Align::Right => "r",
             Align::Justify => "just",
+            Align::Distribute => "dist",
         };
         let before = p
             .style
@@ -790,10 +796,15 @@ fn run_props(s: &TextStyle, css: &Css, link: Option<&str>) -> Result<String> {
             )
         })
         .unwrap_or_default();
-    let family = xml(&s.family);
+    // `font-family: Latin, CJK`: Office takes East Asian text from the second family.
+    let latin = xml(&s.family);
+    let ea = xml(s.fallback.first().unwrap_or(&s.family));
     Ok(format!(
-        "<a:rPr{attrs}>{}{highlight}<a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"{family}\"/>{}</a:rPr>",
-        fill(s.color, 1.0),
+        "<a:rPr{attrs}>{}{highlight}<a:latin typeface=\"{latin}\"/><a:ea typeface=\"{ea}\"/><a:cs typeface=\"{latin}\"/>{}</a:rPr>",
+        match &s.gradient {
+            Some(g) => gradient_fill(g, 1.0),
+            None => fill(s.color, 1.0),
+        },
         link.map(|id| format!("<a:hlinkClick r:id=\"{id}\"/>"))
             .unwrap_or_default()
     ))

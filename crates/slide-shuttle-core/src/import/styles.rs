@@ -507,7 +507,7 @@ impl<'d, 'i> Styles<'d, 'i> {
     ) {
         if let Some(align) = ppr.attribute("algn") {
             props.insert("align".into(), align.into());
-            if !["l", "ctr", "r", "just"].contains(&align) {
+            if !["l", "ctr", "r", "just", "dist"].contains(&align) {
                 problems.insert(format!("paragraph alignment {align} is not reconstructed"));
             }
         }
@@ -592,14 +592,22 @@ impl<'d, 'i> Styles<'d, 'i> {
                 .and_then(|n| n.attribute("typeface"))
                 .filter(|s| !s.is_empty())
         };
-        let requested = if cjk {
-            font("ea").or_else(|| font("latin"))
+        // Distinct Latin and East Asian faces become a `font-family` list, Latin first.
+        // Only the face this run's script uses reports what cannot be resolved.
+        let mut quiet = Problems::new();
+        let (latin_problems, ea_problems) = if cjk {
+            (&mut quiet, &mut *problems)
         } else {
-            font("latin").or_else(|| font("ea"))
+            (&mut *problems, &mut quiet)
         };
-        if let Some(requested) = requested
-            && let Some(family) = self.theme.font(requested, cjk, problems)
-        {
+        let latin = font("latin").and_then(|f| self.theme.font(f, false, latin_problems));
+        let ea = font("ea").and_then(|f| self.theme.font(f, true, ea_problems));
+        let family = match (latin, ea) {
+            (Some(l), Some(e)) if l != e => Some(format!("{l}, {e}")),
+            (l, e) if cjk => e.or(l),
+            (l, e) => l.or(e),
+        };
+        if let Some(family) = family {
             props.insert("family".into(), family.into());
         }
         if let Some(size) = rpr.attribute("sz").and_then(|s| s.parse::<u64>().ok()) {
@@ -622,7 +630,12 @@ impl<'d, 'i> Styles<'d, 'i> {
                 );
             }
         }
-        if let Some(color) = self.theme.fill(rpr, None, problems) {
+        if let Some(gradient) = child(rpr, A, "gradFill") {
+            // Lifted to the whole Text by the caller when every run shares it.
+            if let Some(css) = self.theme.gradient(gradient, problems) {
+                props.insert("colorGradient".into(), css.into());
+            }
+        } else if let Some(color) = self.theme.fill(rpr, None, problems) {
             props.insert("color".into(), color_hex(color).into());
         }
         if let Some(u) = rpr.attribute("u") {

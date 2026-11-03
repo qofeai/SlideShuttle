@@ -262,6 +262,7 @@ impl Painter<'_> {
                 line_count: shaped.lines,
                 export_wrap: false,
                 anchor: VerticalAlign::Top,
+                vertical: false,
             },
         );
         item.text_style = style.clone();

@@ -315,17 +315,28 @@ fn shadow_layer(
         };
         return shadow_layer(&frame, resources, scale);
     }
-    let outline = outlines(item)?;
-    let solid = item.fill.3 > 0 || item.gradient.is_some();
-    // A filled item casts the shadow of its filled parts; an outline casts its strokes.
     let mut builder = tiny_skia::PathBuilder::new();
-    for (commands, shade, stroked) in &outline {
-        if (solid && *shade != PathFill::None || !solid && *stroked)
-            && let Some(p) = skia_path(commands)
-        {
-            builder.push_path(&p);
+    // Text casts the shadow of its letters; a filled item of its filled parts; an outline
+    // of its strokes.
+    let solid = if let Draw::Text { glyphs, .. } = &item.kind {
+        let mut faces = Faces::new();
+        for g in glyphs {
+            if let Some(p) = glyph_path(g, &mut faces, resources)? {
+                builder.push_path(&p);
+            }
         }
-    }
+        true
+    } else {
+        let solid = item.fill.3 > 0 || item.gradient.is_some();
+        for (commands, shade, stroked) in &outlines(item)? {
+            if (solid && *shade != PathFill::None || !solid && *stroked)
+                && let Some(p) = skia_path(commands)
+            {
+                builder.push_path(&p);
+            }
+        }
+        solid
+    };
     let Some(path) = builder
         .finish()
         .and_then(|p| p.transform(turn_transform(item)))
@@ -439,6 +450,37 @@ fn font_bytes<'r>(resources: &'r Resources, glyph: &PositionedGlyph) -> Result<&
         .ok_or_else(|| invalid("missing glyph font bytes"))
 }
 type Faces<'r> = BTreeMap<(usize, u32), ttf_parser::Face<'r>>;
+/// A glyph's outline in page units; sideways glyphs turn a quarter clockwise about their origin.
+fn glyph_path<'r>(
+    g: &PositionedGlyph,
+    faces: &mut Faces<'r>,
+    resources: &'r Resources,
+) -> Result<Option<tiny_skia::Path>> {
+    let face = match faces.entry((g.font, g.font_index)) {
+        Entry::Occupied(e) => e.into_mut(),
+        Entry::Vacant(e) => e.insert(
+            ttf_parser::Face::parse(font_bytes(resources, g)?, g.font_index)
+                .map_err(|e| invalid(format!("font parse: {e}")))?,
+        ),
+    };
+    let mut builder = tiny_skia::PathBuilder::new();
+    face.outline_glyph(
+        ttf_parser::GlyphId(g.glyph_id),
+        &mut Outline {
+            builder: &mut builder,
+            x: g.x,
+            y: g.y,
+            scale: g.size / face.units_per_em() as f32,
+        },
+    );
+    Ok(builder.finish().and_then(|p| {
+        if g.sideways {
+            p.transform(tiny_skia::Transform::from_rotate_at(90.0, g.x, g.y))
+        } else {
+            Some(p)
+        }
+    }))
+}
 fn ensure(scene: &Scene) -> Result<()> {
     if scene.has_errors() {
         Err(invalid(
@@ -667,32 +709,20 @@ fn paint_png<'r>(
                 }
             };
             fill_marks(pixmap, true);
+            // A gradient color spans the whole Text box.
+            let gradient = item
+                .text_style
+                .gradient
+                .as_ref()
+                .map(|g| skia_gradient(item, g))
+                .transpose()?;
             for g in glyphs {
-                let face = match faces.entry((g.font, g.font_index)) {
-                    Entry::Occupied(e) => e.into_mut(),
-                    Entry::Vacant(e) => e.insert(
-                        ttf_parser::Face::parse(font_bytes(resources, g)?, g.font_index)
-                            .map_err(|e| invalid(format!("font parse: {e}")))?,
-                    ),
-                };
-                let mut builder = tiny_skia::PathBuilder::new();
-                face.outline_glyph(
-                    ttf_parser::GlyphId(g.glyph_id),
-                    &mut Outline {
-                        builder: &mut builder,
-                        x: g.x,
-                        y: g.y,
-                        scale: g.size / face.units_per_em() as f32,
-                    },
-                );
-                if let Some(path) = builder.finish() {
-                    pixmap.fill_path(
-                        &path,
-                        &paint(g.color, item.opacity),
-                        tiny_skia::FillRule::Winding,
-                        transform,
-                        None,
-                    );
+                if let Some(path) = glyph_path(g, faces, resources)? {
+                    let mut fill = paint(g.color, item.opacity);
+                    if let Some(shader) = &gradient {
+                        fill.shader = shader.clone();
+                    }
+                    pixmap.fill_path(&path, &fill, tiny_skia::FillRule::Winding, transform, None);
                 }
             }
             fill_marks(pixmap, false);
@@ -973,14 +1003,9 @@ fn paint_pdf(
     }
     painted
 }
-fn paint_pdf_item(
-    item: &Item,
-    surface: &mut krilla::surface::Surface,
-    resources: &Resources,
-    fonts: &mut BTreeMap<(usize, u32), krilla::text::Font>,
-    links: &mut Vec<(Rect, String)>,
-) -> Result<()> {
-    let gradient = if let Some(g) = &item.gradient {
+/// A gradient fill across the item's box.
+fn pdf_gradient(item: &Item, g: &Gradient) -> krilla::paint::Fill {
+    {
         let r = item.rect;
         let stops = g
             .stops
@@ -1021,14 +1046,21 @@ fn paint_pdf_item(
             }
             .into()
         };
-        Some(krilla::paint::Fill {
+        krilla::paint::Fill {
             paint,
             opacity: krilla::num::NormalizedF32::ONE,
             rule: Default::default(),
-        })
-    } else {
-        None
-    };
+        }
+    }
+}
+fn paint_pdf_item(
+    item: &Item,
+    surface: &mut krilla::surface::Surface,
+    resources: &Resources,
+    fonts: &mut BTreeMap<(usize, u32), krilla::text::Font>,
+    links: &mut Vec<(Rect, String)>,
+) -> Result<()> {
+    let gradient = item.gradient.as_ref().map(|g| pdf_gradient(item, g));
     let stroke = if item.stroke_width > 0.0 {
         Some(krilla::paint::Stroke {
             paint: krilla::color::rgb::Color::new(item.stroke.0, item.stroke.1, item.stroke.2)
@@ -1111,7 +1143,14 @@ fn paint_pdf_item(
                         )
                         .clone(),
                 };
-                surface.set_fill(Some(pdf_fill(g.color, item.opacity)));
+                surface.set_fill(Some(match &item.text_style.gradient {
+                    Some(gradient) => pdf_gradient(item, gradient),
+                    None => pdf_fill(g.color, item.opacity),
+                }));
+                if g.sideways {
+                    surface
+                        .push_transform(&krilla::geom::Transform::from_rotate_at(90.0, g.x, g.y));
+                }
                 let glyph = krilla::text::KrillaGlyph {
                     glyph_id: krilla::text::GlyphId::new(u32::from(g.glyph_id)),
                     text_range: 0..g.text.len(),
@@ -1129,6 +1168,9 @@ fn paint_pdf_item(
                     g.size,
                     false,
                 );
+                if g.sideways {
+                    surface.pop();
+                }
             }
             fill_marks(surface, false);
         }

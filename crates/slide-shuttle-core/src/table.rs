@@ -263,6 +263,7 @@ pub(crate) fn place(
                 line_count: shaped.lines,
                 export_wrap: true,
                 anchor: look.anchor,
+                vertical: false,
             },
         );
         label.text_style = look.text.clone();
