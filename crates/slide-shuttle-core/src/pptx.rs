@@ -165,7 +165,11 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
         "slideMasters/slideMaster1.xml".into(),
     )];
     let mut slides = String::new();
-    let (mut media, mut chart_count) = (Media::new(), 0usize);
+    let mut shared = Shared {
+        resources,
+        media: Media::new(),
+        charts: 0,
+    };
     for (index, page) in scene.pages.iter().enumerate() {
         let n = index + 1;
         let mut rels = vec![(
@@ -185,15 +189,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                     let mut bg = item.clone();
                     bg.id = format!("{}::background", item.id);
                     bg.kind = Draw::Box;
-                    body.push_str(&write_item(
-                        &bg,
-                        &mut id,
-                        &mut pkg,
-                        &mut rels,
-                        resources,
-                        &mut media,
-                        &mut chart_count,
-                    )?);
+                    body.push_str(&write_item(&bg, &mut id, &mut pkg, &mut rels, &mut shared)?);
                 }
                 for child in page
                     .items
@@ -205,9 +201,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                         &mut id,
                         &mut pkg,
                         &mut rels,
-                        resources,
-                        &mut media,
-                        &mut chart_count,
+                        &mut shared,
                     )?);
                 }
                 body.push_str("</p:grpSp>");
@@ -217,9 +211,7 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
                     &mut id,
                     &mut pkg,
                     &mut rels,
-                    resources,
-                    &mut media,
-                    &mut chart_count,
+                    &mut shared,
                 )?);
             }
         }
@@ -259,6 +251,12 @@ pub fn export_pptx(scene: &Scene, resources: &Resources, export_id: &str) -> Res
 
 /// Resource key -> (media part name, pixel width, pixel height); one part per image.
 type Media = BTreeMap<String, (String, u32, u32)>;
+/// Package-wide state shared by every slide: images are stored once, charts numbered globally.
+struct Shared<'a> {
+    resources: &'a Resources,
+    media: Media,
+    charts: usize,
+}
 /// Keep the original PNG/JPEG bytes unless an EXIF rotation would make viewers that
 /// honour it disagree with our unrotated pixels. Decoding also validates the image.
 fn media_part(bytes: &[u8]) -> Result<(Vec<u8>, &'static str, u32, u32)> {
@@ -283,15 +281,12 @@ fn media_part(bytes: &[u8]) -> Result<(Vec<u8>, &'static str, u32, u32)> {
         }
     })
 }
-#[allow(clippy::too_many_arguments)]
 fn write_item(
     item: &Item,
     id: &mut u32,
     pkg: &mut Package,
     rels: &mut Vec<(String, String, String)>,
-    resources: &Resources,
-    media: &mut Media,
-    chart_count: &mut usize,
+    shared: &mut Shared,
 ) -> Result<String> {
     if matches!(item.kind, Draw::Box) && item.fill.3 == 0 && item.stroke_width <= 0.0 {
         return Ok(String::new());
@@ -311,21 +306,22 @@ fn write_item(
             paragraphs(spans, &item.text_style, item.opacity)?
         ),
         Draw::Image { src, fit } => {
-            let bytes = resources
+            let bytes = shared
+                .resources
                 .images
                 .get(src)
                 .ok_or_else(|| invalid("missing PPTX image resource"))?;
-            if !media.contains_key(src) {
+            if !shared.media.contains_key(src) {
                 let (bytes, extension, width, height) = media_part(bytes)?;
-                let name = format!("image{}.{extension}", media.len() + 1);
+                let name = format!("image{}.{extension}", shared.media.len() + 1);
                 pkg.bytes(
                     &format!("ppt/media/{name}"),
                     bytes,
                     &format!("image/{extension}"),
                 );
-                media.insert(src.clone(), (name, width, height));
+                shared.media.insert(src.clone(), (name, width, height));
             }
-            let (name, width, height) = &media[src];
+            let (name, width, height) = &shared.media[src];
             let rel = format!("rImage{}", rels.len());
             rels.push((
                 rel.clone(),
@@ -357,12 +353,12 @@ fn write_item(
             series,
             ..
         } => {
-            *chart_count += 1;
-            let n = *chart_count;
+            shared.charts += 1;
+            let n = shared.charts;
             let rel = format!("rChart{n}");
             pkg.text(
                 &format!("ppt/charts/chart{n}.xml"),
-                chart_xml(chart_type, labels, series, &item.text_style),
+                chart_xml(*chart_type, labels, series, &item.text_style),
                 "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
             );
             pkg.bytes(
@@ -395,8 +391,8 @@ fn write_item(
                 custom_geometry(item)?
             } else {
                 let name = match &item.kind {
-                    Draw::Shape(s) if s == "ellipse" => "ellipse",
-                    Draw::Shape(s) if s == "line" => "line",
+                    Draw::Shape(ShapeKind::Ellipse) => "ellipse",
+                    Draw::Shape(ShapeKind::Line) => "line",
                     _ if item.radius > 0.0 => "roundRect",
                     _ => "rect",
                 };
@@ -439,11 +435,11 @@ pub(crate) fn paragraphs(spans: &[Span], base: &TextStyle, opacity: f32) -> Resu
             }
         }
     }
-    let align = match base.align.as_str() {
-        "center" => "ctr",
-        "right" => "r",
-        "justify" => "just",
-        _ => "l",
+    let align = match base.align {
+        Align::Left => "l",
+        Align::Center => "ctr",
+        Align::Right => "r",
+        Align::Justify => "just",
     };
     Ok(paragraphs.iter().map(|runs|{
         let body=runs.iter().map(|(text,s)|format!("<a:r>{}<a:t xml:space=\"preserve\">{}</a:t></a:r>",run_props(s),xml(text))).collect::<String>();
@@ -582,7 +578,12 @@ fn skeleton(pkg: &mut Package, family: &str) {
     pkg.text("ppt/theme/theme1.xml",format!("<a:theme xmlns:a=\"{A}\" name=\"Deck\"><a:themeElements><a:clrScheme name=\"Deck\">{colors}</a:clrScheme><a:fontScheme name=\"Deck\"><a:majorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont><a:latin typeface=\"{family}\"/><a:ea typeface=\"{family}\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme><a:fmtScheme name=\"Deck\"><a:fillStyleLst>{fills}</a:fillStyleLst><a:lnStyleLst>{lines}</a:lnStyleLst><a:effectStyleLst>{effects}</a:effectStyleLst><a:bgFillStyleLst>{fills}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"),"application/vnd.openxmlformats-officedocument.theme+xml");
 }
 
-fn chart_xml(kind: &str, labels: &[String], series: &[Series], text_style: &TextStyle) -> String {
+fn chart_xml(
+    kind: ChartType,
+    labels: &[String],
+    series: &[Series],
+    text_style: &TextStyle,
+) -> String {
     let mut ser = String::new();
     for (i, s) in series.iter().enumerate() {
         let col = column(i + 1);
@@ -599,14 +600,14 @@ fn chart_xml(kind: &str, labels: &[String], series: &[Series], text_style: &Text
             .enumerate()
             .map(|(i, v)| format!("<c:pt idx=\"{i}\"><c:v>{v}</c:v></c:pt>"))
             .collect::<String>();
-        let shape = if kind == "line" {
+        let shape = if kind == ChartType::Line {
             format!("<a:ln w=\"28575\">{}</a:ln>", fill(color, 1.0))
         } else {
             fill(color, 1.0)
         };
-        ser.push_str(&format!("<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/><c:tx><c:strRef><c:f>Sheet1!${col}$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>{}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr>{shape}</c:spPr><c:cat><c:strRef><c:f>Sheet1!$A$2:$A${end}</c:f><c:strCache><c:ptCount val=\"{}\"/>{cats}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!${col}$2:${col}${end}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"{}\"/>{nums}</c:numCache></c:numRef></c:val>{}</c:ser>",xml(&s.name),labels.len(),s.values.len(),if kind=="line"{"<c:smooth val=\"0\"/>"}else{""}));
+        ser.push_str(&format!("<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/><c:tx><c:strRef><c:f>Sheet1!${col}$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>{}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:spPr>{shape}</c:spPr><c:cat><c:strRef><c:f>Sheet1!$A$2:$A${end}</c:f><c:strCache><c:ptCount val=\"{}\"/>{cats}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!${col}$2:${col}${end}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"{}\"/>{nums}</c:numCache></c:numRef></c:val>{}</c:ser>",xml(&s.name),labels.len(),s.values.len(),if kind==ChartType::Line{"<c:smooth val=\"0\"/>"}else{""}));
     }
-    let plot = if kind == "line" {
+    let plot = if kind == ChartType::Line {
         format!(
             "<c:lineChart><c:grouping val=\"standard\"/>{ser}<c:axId val=\"100\"/><c:axId val=\"200\"/></c:lineChart>"
         )

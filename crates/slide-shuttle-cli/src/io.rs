@@ -22,10 +22,11 @@ pub fn read(path: &Path, max: u64) -> Result<Vec<u8>> {
     }
     Ok(b)
 }
-pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resources)> {
+/// Read the source and exactly the fonts and images it declares.
+pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(String, Resources)> {
     let data = read(input, 4 * 1024 * 1024)?;
-    let source = std::str::from_utf8(&data).map_err(|_| fail("source must be UTF-8"))?;
-    let deck = slide_shuttle_core::parse(source)?;
+    let source = String::from_utf8(data).map_err(|_| fail("source must be UTF-8"))?;
+    let deck = slide_shuttle_core::parse(&source)?;
     let root = input
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -73,7 +74,7 @@ pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resourc
     if total > 256 * 1024 * 1024 {
         return Err(fail("resource budget exceeds 256 MiB"));
     }
-    Ok((deck, resources))
+    Ok((source, resources))
 }
 fn local(root: &Path, src: &str) -> Result<std::path::PathBuf> {
     let p = Path::new(src);

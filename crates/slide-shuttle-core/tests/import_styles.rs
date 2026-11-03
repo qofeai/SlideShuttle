@@ -120,7 +120,7 @@ fn theme_fill_stroke_text_alpha_and_default_style_render_as_actual_colors() {
     assert_eq!(item.text_style.family, "DejaVu Sans");
     assert_eq!(item.text_style.size, 24.0);
     assert_eq!(item.text_style.weight, 700);
-    assert_eq!(item.text_style.align, "center");
+    assert_eq!(item.text_style.align, Align::Center);
     assert_eq!(item.text_style.line_height, 32.0);
     let Draw::Text { glyphs, .. } = &item.kind else {
         panic!()
@@ -265,7 +265,7 @@ fn local_text_properties_override_inherited_defaults_including_false_flags() {
     let (imp, _, scene) = imported(&parts);
     assert!(imp.snapshot.losses.is_empty(), "{:?}", imp.snapshot.losses);
     let item = &scene.pages[0].items[0];
-    assert_eq!(item.text_style.align, "right");
+    assert_eq!(item.text_style.align, Align::Right);
     let Draw::Text { glyphs, .. } = &item.kind else {
         panic!()
     };
@@ -351,7 +351,7 @@ fn placeholder_text_inherits_master_then_layout_before_local_runs() {
     assert_eq!(item.text_style.family, "DejaVu Sans");
     assert_eq!(item.text_style.size, 28.0);
     assert_eq!(item.text_style.weight, 400);
-    assert_eq!(item.text_style.align, "center");
+    assert_eq!(item.text_style.align, Align::Center);
     let Draw::Text { glyphs, .. } = &item.kind else {
         panic!()
     };

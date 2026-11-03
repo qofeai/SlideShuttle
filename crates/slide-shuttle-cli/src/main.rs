@@ -4,7 +4,6 @@ use serde_json::json;
 use slide_shuttle_core::{
     baseline::{self, Acceptance, Baseline},
     import::{import_pptx, inspect_pptx},
-    pptx::export_pptx,
     *,
 };
 use std::{
@@ -110,18 +109,9 @@ fn print(v: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(v)?);
     Ok(())
 }
-fn compile(input: &Input) -> Result<(Deck, Resources, Scene)> {
-    let (d, r) = io::load(&input.input, &input.font)?;
-    let s = layout(&d, &r)?;
-    Ok((d, r, s))
-}
-fn bytes(d: &Deck, r: &Resources, s: &Scene) -> Result<Vec<u8>> {
-    let id = digest(&serde_json::to_vec(&json!([
-        baseline::ENGINE,
-        d,
-        baseline::profile(r)?
-    ]))?);
-    export_pptx(s, r, &id)
+fn compile(input: &Input) -> Result<CompiledDocument> {
+    let (source, resources) = io::load(&input.input, &input.font)?;
+    Compiler::new(resources)?.compile(&source)
 }
 fn review(
     input: &Input,
@@ -183,7 +173,8 @@ fn run(cli: Cli) -> Result<()> {
             print(&compiler.measure_text(&text, &style, width, !nowrap)?)?;
         }
         Command::Check { input } => {
-            let (_, _, s) = compile(&input)?;
+            let doc = compile(&input)?;
+            let s = doc.scene();
             print(
                 &json!({"valid":!s.has_errors(),"diagnostics":s.diagnostics,"pages":s.pages.iter().map(|p|json!({"id":p.id,"nodes":p.items.iter().map(|i|json!({"id":i.id,"rect":i.rect,"source":i.source,"lineCount":match &i.kind{Draw::Text{line_count,..}=>Some(*line_count),_=>None}})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
             )?;
@@ -197,7 +188,8 @@ fn run(cli: Cli) -> Result<()> {
             pdf,
             scale,
         } => {
-            let (_, r, s) = compile(&input)?;
+            let doc = compile(&input)?;
+            let (s, r) = (doc.scene(), doc.resources());
             if out.exists() {
                 return Err(fail(
                     "render output directory already exists; choose a new path",
@@ -205,9 +197,9 @@ fn run(cli: Cli) -> Result<()> {
             }
             // Compute all output before publishing; a layout error cannot leave a partial deck.
             let png = (0..s.pages.len())
-                .map(|i| render::render_png(&s, i, &r, scale))
+                .map(|i| render::render_png(s, i, r, scale))
                 .collect::<Result<Vec<_>>>()?;
-            let pdf = pdf.then(|| render::render_pdf(&s, &r)).transpose()?;
+            let pdf = pdf.then(|| doc.render_pdf()).transpose()?;
             for (i, b) in png.iter().enumerate() {
                 io::write_new(&out.join(format!("slide-{:03}.png", i + 1)), b)?;
             }
@@ -217,7 +209,7 @@ fn run(cli: Cli) -> Result<()> {
             io::write_new(
                 &out.join("manifest.json"),
                 &serde_json::to_vec_pretty(
-                    &json!({"engine":baseline::ENGINE,"resourceProfile":baseline::profile(&r)?,"pages":s.pages.len(),"width":s.width,"height":s.height,"diagnostics":s.diagnostics}),
+                    &json!({"engine":baseline::ENGINE,"resourceProfile":doc.resource_profile(),"pages":s.pages.len(),"width":s.width,"height":s.height,"diagnostics":s.diagnostics}),
                 )?,
             )?;
             print(&json!({"output":out,"pages":s.pages.len(),"nativeRenderer":true}))?;
@@ -229,10 +221,10 @@ fn run(cli: Cli) -> Result<()> {
             accept,
             report,
         } => {
-            let (d, r, s) = compile(&input)?;
-            let b = bytes(&d, &r, &s)?;
+            let doc = compile(&input)?;
+            let b = doc.export_pptx()?;
             let snapshot = inspect_pptx(&b)?;
-            let review = review(&input, &args, &d, &r, &snapshot)?;
+            let review = review(&input, &args, doc.deck(), doc.resources(), &snapshot)?;
             let acceptance = accept
                 .as_ref()
                 .map(|p| {
@@ -256,7 +248,7 @@ fn run(cli: Cli) -> Result<()> {
                     )));
                 }
             }
-            let base = Baseline::new(d, snapshot, baseline::profile(&r)?)?;
+            let base = Baseline::new(doc.deck().clone(), snapshot, doc.resource_profile().into())?;
             let dir = input
                 .input
                 .parent()
@@ -290,7 +282,7 @@ fn run(cli: Cli) -> Result<()> {
                 )?,
             )?;
             print(
-                &json!({"output":out,"baseline":dir.join("base.json"),"receipt":receipt,"externalChecked":args.against.is_some(),"diagnostics":s.diagnostics}),
+                &json!({"output":out,"baseline":dir.join("base.json"),"receipt":receipt,"externalChecked":args.against.is_some(),"diagnostics":doc.scene().diagnostics}),
             )?;
         }
         Command::Import { input, out, font } => {
@@ -332,10 +324,9 @@ fn run(cli: Cli) -> Result<()> {
             review: args,
             out,
         } => {
-            let (d, r, s) = compile(&input)?;
-            let b = bytes(&d, &r, &s)?;
-            let planned = inspect_pptx(&b)?;
-            let v = review(&input, &args, &d, &r, &planned)?
+            let doc = compile(&input)?;
+            let planned = inspect_pptx(&doc.export_pptx()?)?;
+            let v = review(&input, &args, doc.deck(), doc.resources(), &planned)?
                 .ok_or_else(|| fail("diff requires --base or imported .slide-shuttle/base.json"))?;
             if let Some(path) = out {
                 io::write_new(&path, &serde_json::to_vec_pretty(&v)?)?;

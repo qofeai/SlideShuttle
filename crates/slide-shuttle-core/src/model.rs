@@ -93,7 +93,7 @@ pub enum Kind {
         src: String,
     },
     Shape {
-        shape: String,
+        shape: ShapeKind,
     },
     Path {
         data: String,
@@ -104,10 +104,42 @@ pub enum Kind {
         columns: Vec<f32>,
     },
     Chart {
-        chart_type: String,
+        chart_type: ChartType,
         labels: Vec<String>,
         series: Vec<Series>,
     },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShapeKind {
+    Rect,
+    Ellipse,
+    Line,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChartType {
+    Bar,
+    Line,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Align {
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Error,
+    Warning,
+}
+/// Parse a lowercase keyword into one of the enums above.
+pub(crate) fn keyword<T: serde::de::DeserializeOwned>(value: &str, what: &str) -> Result<T> {
+    serde_json::from_value(serde_json::Value::String(value.into()))
+        .map_err(|e| invalid(format!("{what}: {e}")))
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Span {
@@ -189,7 +221,7 @@ impl Color {
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
     pub code: String,
-    pub severity: String,
+    pub severity: Severity,
     pub page: String,
     pub node_id: String,
     pub message: String,
@@ -218,7 +250,7 @@ pub struct TextStyle {
     pub weight: u16,
     pub italic: bool,
     pub color: Color,
-    pub align: String,
+    pub align: Align,
 }
 impl Default for TextStyle {
     fn default() -> Self {
@@ -229,7 +261,7 @@ impl Default for TextStyle {
             weight: 400,
             italic: false,
             color: Color::BLACK,
-            align: "left".into(),
+            align: Align::Left,
         }
     }
 }
@@ -243,7 +275,9 @@ pub struct Scene {
 }
 impl Scene {
     pub fn has_errors(&self) -> bool {
-        self.diagnostics.iter().any(|d| d.severity == "error")
+        self.diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error)
     }
 }
 #[derive(Clone, Debug)]
@@ -277,7 +311,7 @@ pub struct LinearGradient {
 pub enum Draw {
     Box,
     Group,
-    Shape(String),
+    Shape(ShapeKind),
     Path {
         data: String,
         view_box: [f32; 2],
@@ -299,7 +333,7 @@ pub enum Draw {
         cells: Vec<Item>,
     },
     Chart {
-        chart_type: String,
+        chart_type: ChartType,
         labels: Vec<String>,
         series: Vec<Series>,
         primitives: Vec<Item>,

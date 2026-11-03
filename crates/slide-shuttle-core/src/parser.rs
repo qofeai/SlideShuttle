@@ -393,15 +393,9 @@ impl<'a> Context<'a> {
             "Image" => Kind::Image {
                 src: substitute(required(n, "src")?, params)?,
             },
-            "Shape" => {
-                let shape = n.attribute("shape").unwrap_or("rect");
-                if !["rect", "ellipse", "line"].contains(&shape) {
-                    return Err(invalid("Shape supports rect, ellipse, line"));
-                }
-                Kind::Shape {
-                    shape: shape.into(),
-                }
-            }
+            "Shape" => Kind::Shape {
+                shape: keyword(n.attribute("shape").unwrap_or("rect"), "Shape shape")?,
+            },
             "Path" => {
                 let vals = n
                     .attribute("viewBox")
@@ -462,10 +456,8 @@ impl<'a> Context<'a> {
                 Kind::Table { rows, columns }
             }
             "Chart" => {
-                let chart_type = n.attribute("type").unwrap_or("bar");
-                if !["bar", "line"].contains(&chart_type) {
-                    return Err(invalid("Chart supports bar or line"));
-                }
+                let chart_type: ChartType =
+                    keyword(n.attribute("type").unwrap_or("bar"), "Chart type")?;
                 let mut labels = Vec::new();
                 let mut series = Vec::new();
                 for c in n.children().filter(|x| x.is_element()) {
@@ -506,7 +498,7 @@ impl<'a> Context<'a> {
                     Color::parse(&s.color)?;
                 }
                 Kind::Chart {
-                    chart_type: chart_type.into(),
+                    chart_type,
                     labels,
                     series,
                 }

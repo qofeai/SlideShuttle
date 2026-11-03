@@ -151,9 +151,7 @@ impl Compiler {
         if width.is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 16384.0) {
             return Err(model::invalid("measurement width must be in (0,16384]px"));
         }
-        if ![400, 700].contains(&style.weight)
-            || !["left", "center", "right", "justify"].contains(&style.align.as_str())
-        {
+        if ![400, 700].contains(&style.weight) {
             return Err(model::invalid("invalid text measurement style"));
         }
         let shape = self.text.shape(

@@ -175,7 +175,7 @@ fn errors_name_every_failing_element_with_its_position() {
         "{error}"
     );
     assert!(
-        error.contains("line 1, column 139: Shape supports"),
+        error.contains("line 1, column 139: Shape shape: unknown variant `star`, expected one of `rect`, `ellipse`, `line`"),
         "{error}"
     );
     let d = parse(&doc(
@@ -258,8 +258,18 @@ fn empty_pptx_text_bodies_preserve_lines_shapes_and_paths() {
     assert_eq!(imported.snapshot.objects.len(), 4);
     let deck = parse(&imported.xml).unwrap();
     let nodes = &deck.slides[0].nodes;
-    assert!(matches!(&nodes[0].kind, Kind::Shape {shape} if shape=="line"));
-    assert!(matches!(&nodes[1].kind, Kind::Shape {shape} if shape=="ellipse"));
+    assert!(matches!(
+        &nodes[0].kind,
+        Kind::Shape {
+            shape: ShapeKind::Line
+        }
+    ));
+    assert!(matches!(
+        &nodes[1].kind,
+        Kind::Shape {
+            shape: ShapeKind::Ellipse
+        }
+    ));
     assert!(matches!(&nodes[2].kind, Kind::Path { .. }));
     assert!(matches!(&nodes[3].kind, Kind::Text{spans} if spans.iter().all(|s|s.text.is_empty())));
     let scene = layout(&deck, &r).unwrap();
