@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 pub(crate) struct TextEngine {
     pub system: FontSystem,
-    faces: BTreeMap<cosmic_text::fontdb::ID, (String, u32)>,
+    faces: BTreeMap<cosmic_text::fontdb::ID, (usize, u32)>,
 }
 pub(crate) struct Shaped {
     pub width: f32,
@@ -19,16 +19,15 @@ impl TextEngine {
         }
         let mut db = cosmic_text::fontdb::Database::new();
         let mut keys = BTreeMap::new();
-        for font in &resources.fonts {
+        for (font_number, font) in resources.fonts.iter().enumerate() {
             if font.bytes.len() > 64 * 1024 * 1024 {
                 return Err(invalid("font exceeds 64 MiB"));
             }
             let before = db.faces().map(|f| f.id).collect::<Vec<_>>();
             db.load_font_data(font.bytes.clone());
-            let font_key = digest(&font.bytes);
             let mut families = Vec::new();
             for f in db.faces().filter(|f| !before.contains(&f.id)) {
-                keys.insert(f.id, (font_key.clone(), f.index));
+                keys.insert(f.id, (font_number, f.index));
                 families.extend(f.families.iter().map(|n| n.0.as_str()));
             }
             if let Some(family) = &font.family
@@ -130,7 +129,7 @@ impl TextEngine {
             w = w.max(run.line_w);
             h = h.max(run.line_top + run.line_height);
             for g in run.glyphs {
-                let (key, index) = self
+                let (font, index) = self
                     .faces
                     .get(&g.font_id)
                     .ok_or_else(|| invalid("font resolver returned an unregistered face"))?;
@@ -140,7 +139,7 @@ impl TextEngine {
                     return Err(invalid(format!("font has no glyph for {text:?}")));
                 }
                 glyphs.push(PositionedGlyph {
-                    font_key: key.clone(),
+                    font: *font,
                     font_index: *index,
                     glyph_id: g.glyph_id,
                     size: g.font_size,

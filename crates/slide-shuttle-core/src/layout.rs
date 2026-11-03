@@ -88,8 +88,8 @@ pub(crate) fn layout_with_text(
                             Kind::Image { src } => resources
                                 .images
                                 .get(src)
-                                .and_then(|b| crate::render::decode_image(b).ok())
-                                .map(|im| (im.width() as f32, im.height() as f32))
+                                .and_then(|b| crate::render::image_size(b).ok())
+                                .map(|(w, h)| (w as f32, h as f32))
                                 .unwrap_or((100.0, 100.0)),
                             Kind::Table { rows, .. } => (
                                 width.unwrap_or(600.0),
@@ -569,10 +569,12 @@ fn emit(
                     &format!("text measures {:.2}×{:.2}px ({} lines); available {:.2}×{:.2}px; font {} at {:.2}px",shaped.width,shaped.height,shaped.lines,content.width,content.height,ts.family,ts.size),
                 ));
             }
-            let stress = text.shape(spans, &ts, Some(content.width * 0.97), wrap)?;
             if export_wrap
-                && stress.height > content.height + 0.5
                 && shaped.height <= content.height + 0.5
+                && text
+                    .shape(spans, &ts, Some(content.width * 0.97), wrap)?
+                    .height
+                    > content.height + 0.5
             {
                 diagnostics.push(diag(
                     "text_tight",

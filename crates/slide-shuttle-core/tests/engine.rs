@@ -391,6 +391,28 @@ fn images_are_resources_and_stay_images() {
     );
 }
 #[test]
+fn pptx_keeps_original_jpeg_bytes_in_one_media_part() {
+    let mut r = resources();
+    let mut jpeg = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        40,
+        20,
+        image::Rgb([9, 168, 143]),
+    ))
+    .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+    .unwrap();
+    let jpeg = jpeg.into_inner();
+    r.images.insert("photo".into(), jpeg.clone());
+    let d = parse(&doc(r#"<Image id="a" src="photo" style="width:80px;height:40px"/><Image id="b" src="photo" style="width:80px;height:40px"/>"#)).unwrap();
+    let s = layout(&d, &r).unwrap();
+    let parts = zip_read(&export_pptx(&s, &r, "jpeg").unwrap());
+    assert_eq!(parts["ppt/media/image1.jpeg"], jpeg);
+    assert_eq!(
+        parts.keys().filter(|k| k.starts_with("ppt/media/")).count(),
+        1
+    );
+}
+#[test]
 fn zip_paths_and_xml_entities_are_rejected() {
     let (_, _, _, b) = compile(&simple());
     let mut p = zip_read(&b);

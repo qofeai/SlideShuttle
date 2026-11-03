@@ -1,6 +1,6 @@
 //! Native drawing of the resolved scene. Neither backend performs text layout.
 use crate::model::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 
 #[derive(Clone, Copy)]
 pub(crate) enum Command {
@@ -95,13 +95,14 @@ fn pdf_path(commands: &[Command]) -> Option<krilla::geom::Path> {
     }
     b.finish()
 }
-pub(crate) fn font_map(resources: &Resources) -> BTreeMap<String, &[u8]> {
+fn font_bytes<'r>(resources: &'r Resources, glyph: &PositionedGlyph) -> Result<&'r [u8]> {
     resources
         .fonts
-        .iter()
-        .map(|f| (digest(&f.bytes), f.bytes.as_slice()))
-        .collect()
+        .get(glyph.font)
+        .map(|f| f.bytes.as_slice())
+        .ok_or_else(|| invalid("missing glyph font bytes"))
 }
+type Faces<'r> = BTreeMap<(usize, u32), ttf_parser::Face<'r>>;
 fn ensure(scene: &Scene) -> Result<()> {
     if scene.has_errors() {
         Err(invalid(
@@ -141,9 +142,9 @@ pub fn render_png(
         page.background.2,
         page.background.3,
     ));
-    let fonts = font_map(resources);
+    let mut faces = Faces::new();
     for item in &page.items {
-        paint_png(item, &mut pixmap, resources, &fonts, scale)?;
+        paint_png(item, &mut pixmap, resources, &mut faces, scale)?;
     }
     pixmap.encode_png().map_err(|e| invalid(e.to_string()))
 }
@@ -196,11 +197,11 @@ fn paint(color: Color, opacity: f32) -> tiny_skia::Paint<'static> {
     p.anti_alias = true;
     p
 }
-fn paint_png(
+fn paint_png<'r>(
     item: &Item,
     pixmap: &mut tiny_skia::Pixmap,
-    resources: &Resources,
-    fonts: &BTreeMap<String, &[u8]>,
+    resources: &'r Resources,
+    faces: &mut Faces<'r>,
     scale: f32,
 ) -> Result<()> {
     let transform = tiny_skia::Transform::from_scale(scale, scale);
@@ -260,11 +261,13 @@ fn paint_png(
     match &item.kind {
         Draw::Text { glyphs, .. } => {
             for g in glyphs {
-                let bytes = fonts
-                    .get(&g.font_key)
-                    .ok_or_else(|| invalid("missing glyph font bytes"))?;
-                let face = ttf_parser::Face::parse(bytes, g.font_index)
-                    .map_err(|e| invalid(format!("font parse: {e}")))?;
+                let face = match faces.entry((g.font, g.font_index)) {
+                    Entry::Occupied(e) => e.into_mut(),
+                    Entry::Vacant(e) => e.insert(
+                        ttf_parser::Face::parse(font_bytes(resources, g)?, g.font_index)
+                            .map_err(|e| invalid(format!("font parse: {e}")))?,
+                    ),
+                };
                 let mut builder = tiny_skia::PathBuilder::new();
                 face.outline_glyph(
                     ttf_parser::GlyphId(g.glyph_id),
@@ -335,21 +338,20 @@ fn paint_png(
         }
         Draw::Table { cells, .. } => {
             for cell in cells {
-                paint_png(cell, pixmap, resources, fonts, scale)?;
+                paint_png(cell, pixmap, resources, faces, scale)?;
             }
         }
         Draw::Chart { primitives, .. } => {
             for p in primitives {
-                paint_png(p, pixmap, resources, fonts, scale)?;
+                paint_png(p, pixmap, resources, faces, scale)?;
             }
         }
         _ => {}
     }
     Ok(())
 }
-pub(crate) fn decode_image(bytes: &[u8]) -> Result<image::RgbaImage> {
-    use image::ImageReader;
-    let mut reader = ImageReader::new(std::io::Cursor::new(bytes))
+pub(crate) fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]>>> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| invalid(e.to_string()))?;
     let mut limits = image::Limits::default();
@@ -357,10 +359,20 @@ pub(crate) fn decode_image(bytes: &[u8]) -> Result<image::RgbaImage> {
     limits.max_image_height = Some(16384);
     limits.max_alloc = Some(256 * 1024 * 1024);
     reader.limits(limits);
-    reader
+    Ok(reader)
+}
+fn image_error(e: image::ImageError) -> Error {
+    invalid(format!("invalid or excessive image: {e}"))
+}
+pub(crate) fn decode_image(bytes: &[u8]) -> Result<image::RgbaImage> {
+    image_reader(bytes)?
         .decode()
         .map(|i| i.to_rgba8())
-        .map_err(|e| invalid(format!("invalid or excessive image: {e}")))
+        .map_err(image_error)
+}
+/// Reads only the header; layout needs intrinsic size, not pixels.
+pub(crate) fn image_size(bytes: &[u8]) -> Result<(u32, u32)> {
+    image_reader(bytes)?.into_dimensions().map_err(image_error)
 }
 pub(crate) fn image_rect(rect: Rect, w: f32, h: f32, fit: &str) -> Rect {
     if fit == "fill" {
@@ -383,7 +395,6 @@ pub(crate) fn image_rect(rect: Rect, w: f32, h: f32, fit: &str) -> Rect {
 pub fn render_pdf(scene: &Scene, resources: &Resources) -> Result<Vec<u8>> {
     ensure(scene)?;
     let mut doc = krilla::Document::new();
-    let bytes = font_map(resources);
     let mut font_cache = BTreeMap::new();
     for page in &scene.pages {
         let settings = krilla::page::PageSettings::from_wh(scene.width * 0.75, scene.height * 0.75)
@@ -410,9 +421,9 @@ pub fn render_pdf(scene: &Scene, resources: &Resources) -> Result<Vec<u8>> {
             text_style: TextStyle::default(),
             source: None,
         };
-        paint_pdf(&bg, &mut surface, resources, &bytes, &mut font_cache)?;
+        paint_pdf(&bg, &mut surface, resources, &mut font_cache)?;
         for item in &page.items {
-            paint_pdf(item, &mut surface, resources, &bytes, &mut font_cache)?;
+            paint_pdf(item, &mut surface, resources, &mut font_cache)?;
         }
         surface.pop();
         surface.finish();
@@ -432,8 +443,7 @@ fn paint_pdf(
     item: &Item,
     surface: &mut krilla::surface::Surface,
     resources: &Resources,
-    bytes: &BTreeMap<String, &[u8]>,
-    fonts: &mut BTreeMap<(String, u32), krilla::text::Font>,
+    fonts: &mut BTreeMap<(usize, u32), krilla::text::Font>,
 ) -> Result<()> {
     surface.set_fill(if item.fill.3 > 0 {
         Some(pdf_fill(item.fill, item.opacity))
@@ -486,15 +496,18 @@ fn paint_pdf(
         Draw::Text { glyphs, .. } => {
             surface.set_stroke(None);
             for g in glyphs {
-                let key = (g.font_key.clone(), g.font_index);
-                if !fonts.contains_key(&key) {
-                    let data = bytes
-                        .get(&g.font_key)
-                        .ok_or_else(|| invalid("missing PDF font"))?;
-                    let font = krilla::text::Font::new(data.to_vec().into(), g.font_index)
-                        .ok_or_else(|| invalid("PDF font is unsupported"))?;
-                    fonts.insert(key.clone(), font);
-                }
+                let font = match fonts.entry((g.font, g.font_index)) {
+                    Entry::Occupied(e) => e.get().clone(),
+                    Entry::Vacant(e) => e
+                        .insert(
+                            krilla::text::Font::new(
+                                font_bytes(resources, g)?.to_vec().into(),
+                                g.font_index,
+                            )
+                            .ok_or_else(|| invalid("PDF font is unsupported"))?,
+                        )
+                        .clone(),
+                };
                 surface.set_fill(Some(pdf_fill(g.color, item.opacity)));
                 let glyph = krilla::text::KrillaGlyph {
                     glyph_id: krilla::text::GlyphId::new(u32::from(g.glyph_id)),
@@ -508,7 +521,7 @@ fn paint_pdf(
                 surface.draw_glyphs(
                     krilla::geom::Point::from_xy(g.x, g.y),
                     &[glyph],
-                    fonts[&key].clone(),
+                    font,
                     &g.text,
                     g.size,
                     false,
@@ -548,12 +561,12 @@ fn paint_pdf(
         }
         Draw::Table { cells, .. } => {
             for cell in cells {
-                paint_pdf(cell, surface, resources, bytes, fonts)?;
+                paint_pdf(cell, surface, resources, fonts)?;
             }
         }
         Draw::Chart { primitives, .. } => {
             for p in primitives {
-                paint_pdf(p, surface, resources, bytes, fonts)?;
+                paint_pdf(p, surface, resources, fonts)?;
             }
         }
         _ => {}
