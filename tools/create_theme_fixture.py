@@ -75,6 +75,6 @@ def main():
     args.out.parent.mkdir(parents=True,exist_ok=True);args.expected.parent.mkdir(parents=True,exist_ok=True)
     with ZipFile(args.out,'w')as z:
         for info,data in parts.values():z.writestr(info,data)
-    args.expected.write_text('<Deck version="1" font-family="Noto Sans CJK SC">'+''.join(expected)+'</Deck>')
+    args.expected.write_text('<Deck font-family="Noto Sans CJK SC">'+''.join(expected)+'</Deck>')
 
 if __name__=='__main__':main()

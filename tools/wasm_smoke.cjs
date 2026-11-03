@@ -59,7 +59,7 @@ assert(JSON.parse(substituted.inspect()).diagnostics.some(d => d.code === 'font_
 if (nativeDir) assert(Buffer.from(substituted.renderPng(0, 1)).equals(fs.readFileSync(path.join(nativeDir, 'slide-001.png'))));
 preview.setFontFallback(undefined);
 assert.throws(() => preview.compile(missingFontSource), /font face not supplied/);
-const empty = preview.compile('<Deck version="1"><Slide id="page-1"><Text id="page-1/object-2" style="width:384px;height:0px"/></Slide></Deck>');
+const empty = preview.compile('<Deck><Slide id="page-1"><Text id="page-1/object-2" style="width:384px;height:0px"/></Slide></Deck>');
 const emptyReport = JSON.parse(empty.inspect());
 assert.equal(emptyReport.valid, true);
 assert.equal(emptyReport.pages[0].nodes[0].text.lineCount, 0);

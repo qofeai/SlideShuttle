@@ -81,18 +81,18 @@ async function main() {
     await page.locator('#xml').fill(original.replace('让想法', '把想法'));
     await page.click('#recompile'); await ready();
     assert.equal((await latestStats()).compilations, 2); assert.equal((await latestStats()).fontBuilds, 1);
-    await page.locator('#xml').fill('<Deck version="1"><Slide id="bad"><Text id="t" style="unknown:yes">Bad</Text></Slide></Deck>');
+    await page.locator('#xml').fill('<Deck><Slide id="bad"><Text id="t" style="unknown:yes">Bad</Text></Slide></Deck>');
     await page.click('#recompile'); await page.waitForFunction(() => document.body.dataset.state === 'error' && document.body.dataset.busy === 'false');
     assert(await page.locator('#slide').isHidden()); assert(await page.locator('#pdf').isDisabled()); assert(await page.locator('#recompile').isEnabled());
     await page.locator('#xml').fill(original); await page.click('#recompile'); await ready();
     assert.equal((await latestStats()).fontBuilds, 1, 'recovering from source errors should reuse loaded fonts');
 
     // A valid but tight box must retain its warning after the page is painted.
-    await page.locator('#xml').fill('<Deck version="1" font-family="Noto Sans CJK SC"><Slide id="tight"><Text id="label" style="width:49px;height:34px;font-size:24px;line-height:34px">中文</Text></Slide></Deck>');
+    await page.locator('#xml').fill('<Deck font-family="Noto Sans CJK SC"><Slide id="tight"><Text id="label" style="width:49px;height:34px;font-size:24px;line-height:34px">中文</Text></Slide></Deck>');
     await page.click('#recompile'); await ready();
     assert((await page.locator('#diagnostics').textContent()).includes('text_tight'), 'page rendering should preserve compiler warnings');
 
-    const missingFontSource = '<Deck version="1" font-family="Missing Preview Font"><Slide id="fallback"><Text id="fallback-title" style="width:900px;height:90px;font-size:32px;font-style:italic">中文字体替代 / preview fallback</Text></Slide></Deck>';
+    const missingFontSource = '<Deck font-family="Missing Preview Font"><Slide id="fallback"><Text id="fallback-title" style="width:900px;height:90px;font-size:32px;font-style:italic">中文字体替代 / preview fallback</Text></Slide></Deck>';
     await page.locator('#xml').fill(missingFontSource); await page.click('#recompile'); await ready();
     assert(await page.locator('#font-notice').isVisible(), 'font substitutions must be visible outside collapsed diagnostics');
     assert.equal(await page.locator('#xml').inputValue(), missingFontSource, 'preview substitution must not rewrite the source editor');
@@ -105,7 +105,7 @@ async function main() {
     assert(await page.locator('#slide').isHidden());
 
     await page.locator('#fonts').setInputFiles([path.join(root, 'crates/slide-shuttle-core/tests/fonts/DejaVuSans.ttf'), path.join(root, 'crates/slide-shuttle-core/tests/fonts/DejaVuSans-Bold.ttf')]);
-    await page.locator('#xml').fill('<Deck version="1" font-family="DejaVu Sans"><Slide id="custom"><Text id="custom-title" style="width:900px;height:90px;font-size:32px;font-weight:700">Custom font resource</Text></Slide></Deck>');
+    await page.locator('#xml').fill('<Deck font-family="DejaVu Sans"><Slide id="custom"><Text id="custom-title" style="width:900px;height:90px;font-size:32px;font-weight:700">Custom font resource</Text></Slide></Deck>');
     await page.click('#run'); await ready();
     assert(await page.locator('#font-notice').isHidden(), 'provided custom faces should render without substitution');
     await page.locator('#fonts').setInputFiles([]);

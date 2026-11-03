@@ -571,7 +571,7 @@ pub fn import_pptx(bytes: &[u8]) -> Result<Imported> {
         .map(|p| format!("<Asset id=\"{}\" src=\"{}\"/>", xml(p), xml(p)))
         .collect::<String>();
     let xml = format!(
-        "<Deck version=\"1\" title=\"Imported presentation\" width=\"{width}emu\" height=\"{height}emu\" font-family=\"Noto Sans CJK SC\">{asset_xml}{}</Deck>",
+        "<Deck title=\"Imported presentation\" width=\"{width}emu\" height=\"{height}emu\" font-family=\"Noto Sans CJK SC\">{asset_xml}{}</Deck>",
         slides.join("")
     );
     let snapshot = Snapshot {

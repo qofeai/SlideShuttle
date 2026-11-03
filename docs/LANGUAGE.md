@@ -1,12 +1,39 @@
-# SlideShuttle Language v1
+# SlideShuttle 源语言
 
-该格式是独立的 XML 文档。以 HTML/CSS 中的盒子、组合、继承和设计令牌为参考，不解释 HTML，不执行 React 或 JavaScript。源文件最大 4 MiB，1–300 页，展开后最多 20,000 个节点，树深度最多 32。DTD 和实体定义不允许。
+该格式是独立的 XML。以 HTML/CSS 中的盒子、组合、继承和设计令牌为参考，不解释 HTML，不执行 React 或 JavaScript。每个文件最大 4 MiB、最多 20,000 个 XML 节点，项目合计 64 MiB；1–300 页，每页展开后最多 20,000 个节点，树深度最多 32。DTD 和实体定义不允许。
+
+## 项目结构
+
+一份稿是一个入口文件，加上它引用的共享库和页面文件：
+
+```
+deck/
+  deck.xml            # 入口：尺寸、字体、共享库、页序
+  design/system.xml   # <Library>：Token / Style / Component / Font / Asset
+  pages/cover.xml     # 一页一个文件，根元素是 <Slide>
+  media/  fonts/
+```
+
+```xml
+<Deck title="年度总结" width="1280px" height="720px" font-family="Noto Sans CJK SC">
+  <Font family="Noto Sans CJK SC" src="fonts/NotoSansCJK-Regular.ttc"/>
+  <Library src="design/system.xml"/>
+  <Slide src="pages/cover.xml"/>
+  <Slide src="pages/market.xml"/>
+</Deck>
+```
+
+- 页序只由入口中 `<Slide>` 的顺序决定，文件名不影响顺序；页面身份是页面文件里的 `id`。
+- `<Library src>` 和 `<Slide src>` 只有 `src`，不能带内容。入口里也可以直接内联 `<Slide id="…">…</Slide>`，小稿可以只有一个文件。
+- 所有路径（页面、共享库、字体、图片）都相对入口所在目录，必须留在该目录内：不能是绝对路径，不能含 `..`，符号链接也不能指向目录外。
+- 共享定义只在入口和 `<Library>` 中；`<Library>` 不能再引用其他文件或包含 `<Slide>`。同名定义报错，不互相覆盖。
+- 错误与诊断带文件名，例如 `pages/market.xml line 3, column 5: …`；`check` / `render` 可用 `--page <slide id>` 只排版、只渲染一页，仍加载入口、共享库和字体。
 
 ## 文档与资源
 
-根节点：`Deck version="1" title="…" width="1280px" height="720px" font-family="…"`。长度支持 px、pt、emu，0 可省单位；1 px = 9525 EMU，1 pt = 4/3 px。页面尺寸最大 16384 px。颜色支持 `#RGB`、`#RRGGBB`、`#RRGGBBAA`、black、white、transparent。
+根节点：`Deck title="…" width="1280px" height="720px" font-family="…"`。长度支持 px、pt、emu，0 可省单位；1 px = 9525 EMU，1 pt = 4/3 px。页面尺寸最大 16384 px。颜色支持 `#RGB`、`#RRGGBB`、`#RRGGBBAA`、black、white、transparent。
 
-`Slide` 需要全局唯一 `id`，背景为纯色。所有普通节点必须有稳定、全局唯一的 `id`，允许 ASCII 字母、数字和 `_ - / .`。渲染诊断带源文件行列和节点 ID；解析与布局错误同样以 `line L, column C: …` 指向出错元素，一次报告各兄弟元素的独立错误（最多 50 条）。
+`Slide` 需要全稿唯一的 `id`，背景为纯色。普通节点必须有稳定的 `id`，只需在本页内唯一，允许 ASCII 字母、数字和 `_ - / .`；诊断以页面 ID 加节点 ID 定位。渲染诊断带文件、行列和节点 ID；解析与布局错误同样以 `文件 line L, column C: …` 指向出错元素，一次报告各兄弟元素的独立错误（最多 50 条）。
 
 | 元素 | 属性 / 内容 |
 |---|---|

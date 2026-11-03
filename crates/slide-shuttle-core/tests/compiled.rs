@@ -21,7 +21,7 @@ fn resources() -> Resources {
 }
 fn source(text: &str) -> String {
     format!(
-        r#"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="first"><Text id="t" style="width:500px;height:100px">{text}</Text></Slide><Slide id="second"><Text id="s" style="width:500px;height:100px">Second page</Text></Slide></Deck>"#
+        r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="first"><Text id="t" style="width:500px;height:100px">{text}</Text></Slide><Slide id="second"><Text id="s" style="width:500px;height:100px">Second page</Text></Slide></Deck>"#
     )
 }
 
@@ -58,7 +58,7 @@ fn compiled_resource_snapshots_do_not_alias_future_image_changes() {
     };
     let mut r = resources();
     r.images.insert("photo".into(), image([255, 0, 0, 255]));
-    let xml = r#"<Deck version="1" width="100px" height="100px" font-family="DejaVu Sans"><Slide id="p"><Image id="i" src="photo" style="width:100px;height:100px"/></Slide></Deck>"#;
+    let xml = r#"<Deck width="100px" height="100px" font-family="DejaVu Sans"><Slide id="p"><Image id="i" src="photo" style="width:100px;height:100px"/></Slide></Deck>"#;
     let old = Compiler::new(r.clone()).unwrap().compile(xml).unwrap();
     r.images.insert("photo".into(), image([0, 0, 255, 255]));
     let new = Compiler::new(r).unwrap().compile(xml).unwrap();
@@ -122,7 +122,7 @@ fn text_measurement_reports_wraps_and_rejects_invalid_requests() {
 fn intrinsic_labels_and_explicit_nowrap_preserve_pptx_line_policy() {
     let body = r#"<Box id="row" style="display:flex;justify-content:center;width:600px;height:60px"><Text id="label" style="font-size:26px;line-height:34px;font-weight:700">Arrangement</Text></Box><Text id="fixed" style="width:500px;height:50px">Explicit width paragraph</Text><Text id="nowrap" style="width:500px;height:50px;white-space:nowrap">Do not wrap</Text><Text id="soft" style="width:80px;height:170px;font-size:18px;line-height:24px">This paragraph wraps automatically</Text>"#;
     let xml = format!(
-        r#"<Deck version="1" width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p">{body}</Slide></Deck>"#
+        r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="p">{body}</Slide></Deck>"#
     );
     let document = Compiler::new(resources()).unwrap().compile(&xml).unwrap();
     assert!(!document.scene().has_errors());
@@ -195,7 +195,7 @@ fn asset_aliases_bind_to_explicit_byte_resources() {
         "palette.png".into(),
         include_bytes!("../../../examples/palette.png").to_vec(),
     );
-    let xml = r#"<Deck version="1" width="300px" height="180px" font-family="DejaVu Sans"><Asset id="hero" src="palette.png"/><Slide id="p"><Image id="picture" src="hero" style="width:300px;height:180px"/></Slide></Deck>"#;
+    let xml = r#"<Deck width="300px" height="180px" font-family="DejaVu Sans"><Asset id="hero" src="palette.png"/><Slide id="p"><Image id="picture" src="hero" style="width:300px;height:180px"/></Slide></Deck>"#;
     let doc = Compiler::new(r).unwrap().compile(xml).unwrap();
     assert!(doc.render_png(0, 1.0).is_ok());
     assert!(doc.export_pptx().is_ok());
@@ -204,7 +204,7 @@ fn asset_aliases_bind_to_explicit_byte_resources() {
 
 #[test]
 fn font_fallback_is_explicit_reported_and_preserves_source_inheritance() {
-    let xml = r#"<Deck version="1" width="640px" height="360px" font-family="Missing Family"><Slide id="p"><Box id="box" style="font-weight:700"><Text id="t" style="width:600px;height:100px">Fallback <Span style="font-family:DejaVu Sans;font-weight:400">Exact face</Span></Text></Box></Slide></Deck>"#;
+    let xml = r#"<Deck width="640px" height="360px" font-family="Missing Family"><Slide id="p"><Box id="box" style="font-weight:700"><Text id="t" style="width:600px;height:100px">Fallback <Span style="font-family:DejaVu Sans;font-weight:400">Exact face</Span></Text></Box></Slide></Deck>"#;
     let mut compiler = Compiler::new(resources()).unwrap();
     assert!(
         compiler.compile(xml).is_err(),
@@ -319,7 +319,7 @@ fn empty_text_has_no_line_box_but_authored_blank_lines_remain() {
         .unwrap();
     assert!(blank_line.height >= style.line_height);
     assert!(blank_line.line_count > 0);
-    let xml = r#"<Deck version="1" font-family="DejaVu Sans"><Slide id="p"><Text id="empty" style="position:absolute;width:384px;height:0px"/><Text id="spans" style="position:absolute;top:50px;width:595.2px;height:0px"><Span/><Span/></Text></Slide></Deck>"#;
+    let xml = r#"<Deck font-family="DejaVu Sans"><Slide id="p"><Text id="empty" style="position:absolute;width:384px;height:0px"/><Text id="spans" style="position:absolute;top:50px;width:595.2px;height:0px"><Span/><Span/></Text></Slide></Deck>"#;
     let document = compiler.compile(xml).unwrap();
     assert!(document.scene().diagnostics.is_empty());
     for item in &document.scene().pages[0].items {

@@ -5,7 +5,7 @@
 ## 可以直接使用
 
 ```xml
-<Deck version="1" width="1280px" height="720px" font-family="Noto Sans CJK SC">
+<Deck width="1280px" height="720px" font-family="Noto Sans CJK SC">
   <Token name="accent" value="#087E6D"/>
   <Style name="title">font-size:48px;line-height:64px;font-weight:700</Style>
   <Slide id="overview" background="#FFFFFF">
@@ -20,7 +20,7 @@
 </Deck>
 ```
 
-所有 Slide/普通节点使用全局唯一、稳定的 ASCII 语义 ID，如 `market/evidence`。节点支持 Box、Text/Span/br、Image、Shape、Path、Table、Chart、单层 Group，另有 Token、Style、Component/Use。XML 特殊字符应转义；Text 内真实空白会保留，排版时避免源码缩进被当作正文，使用明确的 br 换行。
+Slide 使用全稿唯一、稳定的 ASCII 语义 ID；普通节点只需在本页内唯一，如 `evidence`。多页稿用入口 `deck.xml` + `<Library src>` + 每页一个 `<Slide src>` 文件，见语言说明的“项目结构”；改一页后用 `check --page <id>` 快速自检。节点支持 Box、Text/Span/br、Image、Shape、Path、Table、Chart、单层 Group，另有 Token、Style、Component/Use。XML 特殊字符应转义；Text 内真实空白会保留，排版时避免源码缩进被当作正文，使用明确的 br 换行。
 
 | 需要 | 使用 |
 |---|---|

@@ -1,4 +1,4 @@
-<Deck version="1" title="从内容到一份清晰的演示" width="1280px" height="720px" font-family="Noto Sans CJK SC">
+<Deck title="从内容到一份清晰的演示" width="1280px" height="720px" font-family="Noto Sans CJK SC">
   <Token name="ink" value="#142B36"/>
   <Token name="accent" value="#087E6D"/>
   <Token name="paper" value="#F4F1E9"/>
