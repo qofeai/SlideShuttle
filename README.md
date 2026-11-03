@@ -102,7 +102,7 @@ import init, { Engine } from './wasm/slide_shuttle_wasm.js';
 await init();
 const engine = new Engine();
 engine.addFont('Noto Sans CJK SC', regularFontBytes);
-engine.addFont('Noto Sans CJK SC', boldFontBytes);
+engine.addFont('Noto Sans CJK SC', boldFontBytes); // 文件必须提供该 family；传 undefined 则不校验
 engine.addImage('hero', pngBytes); // 对应源文件的 src="hero"
 const deck = engine.compile(sourceXml);
 const report = JSON.parse(deck.inspect());

@@ -34,13 +34,13 @@ pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resourc
     let mut resources = Resources::default();
     for font in &deck.fonts {
         resources.fonts.push(FontResource {
-            family: font.family.clone(),
+            family: Some(font.family.clone()),
             bytes: read(&local(&root, &font.src)?, 64 * 1024 * 1024)?,
         });
     }
     for path in fonts {
         resources.fonts.push(FontResource {
-            family: "explicit-cli-font".into(),
+            family: None,
             bytes: read(path, 64 * 1024 * 1024)?,
         });
     }

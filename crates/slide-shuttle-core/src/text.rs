@@ -26,8 +26,20 @@ impl TextEngine {
             let before = db.faces().map(|f| f.id).collect::<Vec<_>>();
             db.load_font_data(font.bytes.clone());
             let font_key = digest(&font.bytes);
+            let mut families = Vec::new();
             for f in db.faces().filter(|f| !before.contains(&f.id)) {
                 keys.insert(f.id, (font_key.clone(), f.index));
+                families.extend(f.families.iter().map(|n| n.0.as_str()));
+            }
+            if let Some(family) = &font.family
+                && !families.contains(&family.as_str())
+            {
+                families.sort_unstable();
+                families.dedup();
+                return Err(invalid(format!(
+                    "declared font family {family} is not in its file; the file provides: {}",
+                    families.join(", ")
+                )));
             }
         }
         if keys.is_empty() {

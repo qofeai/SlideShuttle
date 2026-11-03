@@ -10,11 +10,11 @@ fn resources() -> Resources {
     Resources {
         fonts: vec![
             FontResource {
-                family: "DejaVu Sans".into(),
+                family: Some("DejaVu Sans".into()),
                 bytes: include_bytes!("fonts/DejaVuSans.ttf").to_vec(),
             },
             FontResource {
-                family: "DejaVu Sans".into(),
+                family: Some("DejaVu Sans".into()),
                 bytes: include_bytes!("fonts/DejaVuSans-Bold.ttf").to_vec(),
             },
         ],

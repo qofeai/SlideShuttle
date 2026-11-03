@@ -32,7 +32,7 @@ self.onmessage = async ({ data: message }) => {
         resourcesLoaded = false;
         engine.clear();
         progress(id, revision, '正在加载字体和图片…');
-        for (const font of payload.fonts) engine.addFont(font.name, new Uint8Array(font.bytes));
+        for (const font of payload.fonts) engine.addFont(undefined, new Uint8Array(font.bytes));
         for (const image of payload.images ?? []) engine.addImage(image.name, new Uint8Array(image.bytes));
         resourcesLoaded = true;
         imported = payload.kind === 'pptx';
