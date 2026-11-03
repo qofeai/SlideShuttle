@@ -120,7 +120,8 @@ pub enum Kind {
         view_box: [f32; 2],
     },
     Table {
-        rows: Vec<Vec<String>>,
+        rows: Vec<TableRow>,
+        /// Column width ratios.
         columns: Vec<f32>,
     },
     Chart {
@@ -223,6 +224,41 @@ pub enum Severity {
 pub(crate) fn keyword<T: serde::de::DeserializeOwned>(value: &str, what: &str) -> Result<T> {
     serde_json::from_value(serde_json::Value::String(value.into()))
         .map_err(|e| invalid(format!("{what}: {e}")))
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TableRow {
+    pub style: Css,
+    pub cells: Vec<TableCell>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TableCell {
+    pub paragraphs: Vec<Paragraph>,
+    pub style: Css,
+    pub colspan: usize,
+    pub rowspan: usize,
+}
+/// A laid-out table cell: geometry, fill, the four borders and its text.
+#[derive(Clone, Debug)]
+pub struct CellBox {
+    pub row: usize,
+    pub col: usize,
+    pub rowspan: usize,
+    pub colspan: usize,
+    pub rect: Rect,
+    pub fill: Color,
+    /// Top, right, bottom, left.
+    pub borders: [CellBorder; 4],
+    /// Top, right, bottom, left.
+    pub padding: [f32; 4],
+    pub anchor: VerticalAlign,
+    pub paragraphs: Vec<Paragraph>,
+    pub text_style: TextStyle,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CellBorder {
+    pub width: f32,
+    pub color: Color,
+    pub dash: Dash,
 }
 /// One paragraph of a Text: inline spans, paragraph style (`text-align`, `margin-top`)
 /// and an optional list marker.
@@ -542,8 +578,12 @@ pub enum Draw {
     },
     Icon(crate::icon::Icon),
     Table {
-        rows: Vec<Vec<String>>,
+        /// Resolved cells, for writing a native table.
+        grid: Vec<CellBox>,
+        /// Column widths and row heights in px.
         columns: Vec<f32>,
+        rows: Vec<f32>,
+        /// What PNG/PDF paint: fills, text and border lines.
         cells: Vec<Item>,
     },
     Chart {

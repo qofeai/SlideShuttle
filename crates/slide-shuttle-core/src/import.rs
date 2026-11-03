@@ -5,7 +5,7 @@ use crate::{
     model::*,
     pptx::{A, P, R},
 };
-use colors::Problems;
+use colors::{Problems, color_hex};
 use roxmltree::{Document, Node as X};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -878,6 +878,241 @@ impl Reader<'_> {
         }
         Ok(())
     }
+    /// One table cell: spans, padding, anchor, fill, the four borders and its rich text.
+    fn table_cell(
+        &self,
+        n: X<'_, '_>,
+        tc: X<'_, '_>,
+        part: &SlidePart<'_, '_, '_>,
+        problems: &mut Problems,
+    ) -> String {
+        let styles = part.styles;
+        let mut attrs = String::new();
+        for (ooxml, ours) in [("gridSpan", "colspan"), ("rowSpan", "rowspan")] {
+            if let Some(v) = tc.attribute(ooxml).filter(|v| *v != "1") {
+                attrs.push_str(&format!(" {ours}=\"{}\"", xml(v)));
+            }
+        }
+        let pr = child(tc, A, "tcPr");
+        let emu = |k: &str, default: i64| {
+            pr.and_then(|p| p.attribute(k))
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(default)
+        };
+        let mut css = vec![format!(
+            "padding:{}emu {}emu {}emu {}emu",
+            emu("marT", 45720),
+            emu("marR", 91440),
+            emu("marB", 45720),
+            emu("marL", 91440)
+        )];
+        css.push(format!(
+            "vertical-align:{}",
+            match pr.and_then(|p| p.attribute("anchor")) {
+                Some("ctr") => "middle",
+                Some("b") => "bottom",
+                _ => "top",
+            }
+        ));
+        if let Some(pr) = pr {
+            if let Some(color) = styles.theme.fill(pr, None, problems).filter(|c| c.3 > 0) {
+                css.push(format!("background-color:#{}", color_hex(color)));
+            }
+            for (tag, side) in [
+                ("lnT", "top"),
+                ("lnR", "right"),
+                ("lnB", "bottom"),
+                ("lnL", "left"),
+            ] {
+                let Some(ln) = child(pr, A, tag) else {
+                    continue;
+                };
+                let width = ln
+                    .attribute("w")
+                    .and_then(|w| w.parse::<i64>().ok())
+                    .unwrap_or(12700);
+                match styles
+                    .theme
+                    .fill(ln, None, problems)
+                    .filter(|c| c.3 > 0 && width > 0)
+                {
+                    Some(color) => {
+                        let dash = match child(ln, A, "prstDash").and_then(|d| d.attribute("val")) {
+                            Some("sysDot" | "dot") => "dotted",
+                            Some("solid") | None => "solid",
+                            _ => "dashed",
+                        };
+                        css.push(format!(
+                            "border-{side}:{width}emu {dash} #{}",
+                            color_hex(color)
+                        ));
+                    }
+                    None => css.push(format!("border-{side}-width:0")),
+                }
+            }
+        }
+        let body = child(tc, A, "txBody");
+        let first = body.and_then(|b| b.children().find(|x| x.has_tag_name((A, "p"))));
+        let base = styles.text_properties(n, first, None, problems);
+        if let Some(align) = base
+            .get("align")
+            .and_then(Value::as_str)
+            .filter(|a| *a != "l")
+        {
+            css.push(format!("text-align:{}", text_align(align)));
+        }
+        let content = body
+            .filter(|b| !plain(*b).trim().is_empty())
+            .map(|b| self.rich_body(n, b, &Value::Object(base), part, problems))
+            .unwrap_or_default();
+        format!(
+            "<Cell{attrs} style=\"{}\">{content}</Cell>",
+            xml(&css.join(";"))
+        )
+    }
+    /// A text body as source markup: inline spans for one plain paragraph, otherwise `<P>`
+    /// and nested `<List>` blocks. `base` holds the containing object's text properties.
+    fn rich_body(
+        &self,
+        n: X<'_, '_>,
+        body: X<'_, '_>,
+        base: &Value,
+        part: &SlidePart<'_, '_, '_>,
+        problems: &mut Problems,
+    ) -> String {
+        let SlidePart { links, styles, .. } = *part;
+        let props = base;
+        // (paragraph properties, list level, inline markup) per paragraph.
+        let mut items = Vec::new();
+        for p in body.children().filter(|x| x.has_tag_name((A, "p"))) {
+            let paragraph = styles.text_properties(n, Some(p), None, problems);
+            let level = child(p, A, "pPr")
+                .and_then(|p| p.attribute("lvl"))
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0);
+            let mut spans = String::new();
+            // The marker and indent follow the item's first run.
+            let mut first_size = None;
+            for run in p.children().filter(|x| x.is_element()) {
+                if run.has_tag_name((A, "r")) || run.has_tag_name((A, "fld")) {
+                    let value = desc(run, A, "t").and_then(|x| x.text()).unwrap_or("");
+                    let mut props = styles.text_properties(n, Some(p), Some(run), problems);
+                    first_size = first_size.or_else(|| props.get("size").and_then(Value::as_u64));
+                    props.remove("align");
+                    let link = child(run, A, "rPr")
+                        .and_then(|r| child(r, A, "hlinkClick"))
+                        .and_then(|h| h.attribute((R, "id")));
+                    let href = link
+                        .and_then(|id| links.get(id))
+                        .filter(|href| crate::parser::link_target(href).is_ok());
+                    if link.is_some() && href.is_none() {
+                        problems.insert("hyperlink target is not reconstructed".into());
+                    }
+                    if let Some(href) = href {
+                        // Links take the theme link color and underline.
+                        for key in ["color", "underline", "strike"] {
+                            props.remove(key);
+                        }
+                        spans.push_str(&format!(
+                            "<A href=\"{}\" style=\"{}\">{}</A>",
+                            xml(href),
+                            xml(&style_css(&Value::Object(props), true)),
+                            xml(value)
+                        ));
+                    } else {
+                        spans.push_str(&format!(
+                            "<Span style=\"{}\">{}</Span>",
+                            xml(&style_css(&Value::Object(props), true)),
+                            xml(value)
+                        ));
+                    }
+                } else if run.has_tag_name((A, "br")) {
+                    spans.push_str("<br/>");
+                }
+            }
+            let mut paragraph = paragraph;
+            if let Some(size) = first_size {
+                paragraph.insert("size".into(), size.into());
+            }
+            items.push((paragraph, level, spans));
+        }
+        let bullet = |p: &Map<String, Value>| match p.get("bullet").and_then(Value::as_str) {
+            Some("char") => Some(false),
+            Some("number") => Some(true),
+            _ => None,
+        };
+        if items.len() == 1 && bullet(&items[0].0).is_none() {
+            items.pop().map(|(_, _, spans)| spans).unwrap_or_default()
+        } else {
+            let mut out = String::new();
+            // Open lists, outermost first: whether each is numbered.
+            let mut open: Vec<bool> = Vec::new();
+            for (paragraph, level, spans) in &items {
+                let mut style = Vec::new();
+                if paragraph.get("align") != props.get("align")
+                    && let Some(align) = paragraph.get("align").and_then(Value::as_str)
+                {
+                    style.push(format!("text-align:{}", text_align(align)));
+                }
+                if let Some(before) = paragraph
+                    .get("spaceBefore")
+                    .and_then(Value::as_u64)
+                    .filter(|v| *v > 0)
+                {
+                    style.push(format!("margin-top:{}px", before as f64 / 75.0));
+                }
+                let style = if style.is_empty() {
+                    String::new()
+                } else {
+                    format!(" style=\"{}\"", style.join(";"))
+                };
+                let Some(ordered) = bullet(paragraph) else {
+                    for _ in open.drain(..) {
+                        out.push_str("</Item></List>");
+                    }
+                    out.push_str(&format!("<P{style}>{spans}</P>"));
+                    continue;
+                };
+                // A level may only go one deeper than the list it nests in.
+                let level = (*level).min(open.len()).min(4);
+                while open.len() > level + 1
+                    || open.len() == level + 1 && open.last() != Some(&ordered)
+                {
+                    open.pop();
+                    out.push_str("</Item></List>");
+                }
+                if open.len() == level + 1 {
+                    out.push_str("</Item>");
+                } else {
+                    let start = paragraph
+                        .get("bulletStart")
+                        .and_then(Value::as_u64)
+                        .filter(|v| ordered && *v > 1)
+                        .map(|v| format!(" start=\"{v}\""))
+                        .unwrap_or_default();
+                    let kind = if ordered { "number" } else { "bullet" };
+                    out.push_str(&format!("<List type=\"{kind}\"{start}>"));
+                    open.push(ordered);
+                }
+                let size = paragraph
+                    .get("size")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1800) as f64
+                    / 75.0;
+                let expected = (level + 1) as f64 * 1.5 * size;
+                if let Some(margin) = paragraph.get("marL").and_then(Value::as_i64)
+                    && (margin as f64 / 9525.0 - expected).abs() > expected * 0.25
+                {
+                    problems.insert("list indent is drawn at 1.5em per level".into());
+                }
+                out.push_str(&format!("<Item{style}>{spans}"));
+            }
+            for _ in open.drain(..) {
+                out.push_str("</Item></List>");
+            }
+            out
+        }
+    }
     /// Rebuild one non-group slide object as source XML; unsupported parts become losses.
     fn reconstruct(
         &mut self,
@@ -887,11 +1122,7 @@ impl Reader<'_> {
         problems: &mut Problems,
     ) -> Result<String> {
         let SlidePart {
-            page,
-            rels,
-            links,
-            styles,
-            ..
+            page, rels, styles, ..
         } = *part;
         let Target {
             name,
@@ -1003,17 +1234,25 @@ impl Reader<'_> {
                 .join(" ");
             let mut rows = String::new();
             for tr in table.children().filter(|x| x.has_tag_name((A, "tr"))) {
-                rows.push_str("<Row>");
+                let height = tr
+                    .attribute("h")
+                    .and_then(|h| h.parse::<i64>().ok())
+                    .filter(|h| *h > 0)
+                    .map(|h| format!(" style=\"height:{h}emu\""))
+                    .unwrap_or_default();
+                rows.push_str(&format!("<Row{height}>"));
                 for tc in tr.children().filter(|x| x.has_tag_name((A, "tc"))) {
-                    rows.push_str(&format!("<Cell>{}</Cell>", xml(&plain(tc))));
-                    if tc.attribute("gridSpan").is_some() || tc.attribute("rowSpan").is_some() {
-                        self.loss(page, name, "merged table cells are not reconstructed");
+                    let merged = |k: &str| matches!(tc.attribute(k), Some("1" | "true"));
+                    if merged("hMerge") || merged("vMerge") {
+                        continue;
                     }
+                    rows.push_str(&self.table_cell(n, tc, part, problems));
                 }
                 rows.push_str("</Row>");
             }
+            // Cells carry their own borders; the table adds no default grid.
             format!(
-                "<Table id=\"{import_id}\" columns=\"{columns}\" style=\"{pos};{}\">{rows}</Table>",
+                "<Table id=\"{import_id}\" columns=\"{columns}\" style=\"{pos};{};border-width:0\">{rows}</Table>",
                 xml(css)
             )
         } else if let Some(chart) = n.descendants().find(|x| x.tag_name().name() == "chart") {
@@ -1035,129 +1274,7 @@ impl Reader<'_> {
         } else if let Some(body) =
             child(n, P, "txBody").filter(|body| !plain(*body).trim().is_empty())
         {
-            // (paragraph properties, list level, inline markup) per paragraph.
-            let mut items = Vec::new();
-            for p in body.children().filter(|x| x.has_tag_name((A, "p"))) {
-                let paragraph = styles.text_properties(n, Some(p), None, problems);
-                let level = child(p, A, "pPr")
-                    .and_then(|p| p.attribute("lvl"))
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .unwrap_or(0);
-                let mut spans = String::new();
-                for run in p.children().filter(|x| x.is_element()) {
-                    if run.has_tag_name((A, "r")) || run.has_tag_name((A, "fld")) {
-                        let value = desc(run, A, "t").and_then(|x| x.text()).unwrap_or("");
-                        let mut props = styles.text_properties(n, Some(p), Some(run), problems);
-                        props.remove("align");
-                        let link = child(run, A, "rPr")
-                            .and_then(|r| child(r, A, "hlinkClick"))
-                            .and_then(|h| h.attribute((R, "id")));
-                        let href = link
-                            .and_then(|id| links.get(id))
-                            .filter(|href| crate::parser::link_target(href).is_ok());
-                        if link.is_some() && href.is_none() {
-                            problems.insert("hyperlink target is not reconstructed".into());
-                        }
-                        if let Some(href) = href {
-                            // Links take the theme link color and underline.
-                            for key in ["color", "underline", "strike"] {
-                                props.remove(key);
-                            }
-                            spans.push_str(&format!(
-                                "<A href=\"{}\" style=\"{}\">{}</A>",
-                                xml(href),
-                                xml(&style_css(&Value::Object(props), true)),
-                                xml(value)
-                            ));
-                        } else {
-                            spans.push_str(&format!(
-                                "<Span style=\"{}\">{}</Span>",
-                                xml(&style_css(&Value::Object(props), true)),
-                                xml(value)
-                            ));
-                        }
-                    } else if run.has_tag_name((A, "br")) {
-                        spans.push_str("<br/>");
-                    }
-                }
-                items.push((paragraph, level, spans));
-            }
-            let bullet = |p: &Map<String, Value>| match p.get("bullet").and_then(Value::as_str) {
-                Some("char") => Some(false),
-                Some("number") => Some(true),
-                _ => None,
-            };
-            let spans = if items.len() == 1 && bullet(&items[0].0).is_none() {
-                items.pop().map(|(_, _, spans)| spans).unwrap_or_default()
-            } else {
-                let mut out = String::new();
-                // Open lists, outermost first: whether each is numbered.
-                let mut open: Vec<bool> = Vec::new();
-                for (paragraph, level, spans) in &items {
-                    let mut style = Vec::new();
-                    if paragraph.get("align") != props.get("align")
-                        && let Some(align) = paragraph.get("align").and_then(Value::as_str)
-                    {
-                        style.push(format!("text-align:{}", text_align(align)));
-                    }
-                    if let Some(before) = paragraph
-                        .get("spaceBefore")
-                        .and_then(Value::as_u64)
-                        .filter(|v| *v > 0)
-                    {
-                        style.push(format!("margin-top:{}px", before as f64 / 75.0));
-                    }
-                    let style = if style.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" style=\"{}\"", style.join(";"))
-                    };
-                    let Some(ordered) = bullet(paragraph) else {
-                        for _ in open.drain(..) {
-                            out.push_str("</Item></List>");
-                        }
-                        out.push_str(&format!("<P{style}>{spans}</P>"));
-                        continue;
-                    };
-                    // A level may only go one deeper than the list it nests in.
-                    let level = (*level).min(open.len()).min(4);
-                    while open.len() > level + 1
-                        || open.len() == level + 1 && open.last() != Some(&ordered)
-                    {
-                        open.pop();
-                        out.push_str("</Item></List>");
-                    }
-                    if open.len() == level + 1 {
-                        out.push_str("</Item>");
-                    } else {
-                        let start = paragraph
-                            .get("bulletStart")
-                            .and_then(Value::as_u64)
-                            .filter(|v| ordered && *v > 1)
-                            .map(|v| format!(" start=\"{v}\""))
-                            .unwrap_or_default();
-                        let kind = if ordered { "number" } else { "bullet" };
-                        out.push_str(&format!("<List type=\"{kind}\"{start}>"));
-                        open.push(ordered);
-                    }
-                    let size = paragraph
-                        .get("size")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(1800) as f64
-                        / 75.0;
-                    let expected = (level + 1) as f64 * 1.5 * size;
-                    if let Some(margin) = paragraph.get("marL").and_then(Value::as_i64)
-                        && (margin as f64 / 9525.0 - expected).abs() > expected * 0.25
-                    {
-                        problems.insert("list indent is drawn at 1.5em per level".into());
-                    }
-                    out.push_str(&format!("<Item{style}>{spans}"));
-                }
-                for _ in open.drain(..) {
-                    out.push_str("</Item></List>");
-                }
-                out
-            };
+            let spans = self.rich_body(n, body, props, part, problems);
             let bodypr = child(body, A, "bodyPr");
             let white_space = if bodypr.is_some_and(|p| p.attribute("wrap") == Some("none")) {
                 ";white-space:nowrap"

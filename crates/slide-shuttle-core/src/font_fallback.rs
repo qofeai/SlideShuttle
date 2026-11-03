@@ -82,17 +82,31 @@ pub(crate) fn apply(deck: &mut Deck, fallback: &str, text: &TextEngine) -> Resul
             ) {
                 let resolved = resolve(&requested, fallback, text)?;
                 bind(&mut node.style, &requested, &resolved, &mut changes);
-                if let Kind::Text { paragraphs } = &mut node.kind {
-                    for span in paragraphs.iter_mut().flat_map(|p| &mut p.spans) {
-                        let requested_span = text_style(&span.style, &requested)?;
-                        let resolved_span = resolve(&requested_span, fallback, text)?;
-                        bind(
-                            &mut span.style,
-                            &requested_span,
-                            &resolved_span,
-                            &mut changes,
-                        );
+                // Each level is resolved against what its parent requested.
+                let mut nested = |css: &mut Css, parent: &TextStyle| -> Result<TextStyle> {
+                    let requested = text_style(css, parent)?;
+                    let resolved = resolve(&requested, fallback, text)?;
+                    bind(css, &requested, &resolved, &mut changes);
+                    Ok(requested)
+                };
+                match &mut node.kind {
+                    Kind::Text { paragraphs } => {
+                        for span in paragraphs.iter_mut().flat_map(|p| &mut p.spans) {
+                            nested(&mut span.style, &requested)?;
+                        }
                     }
+                    Kind::Table { rows, .. } => {
+                        for row in rows {
+                            let in_row = nested(&mut row.style, &requested)?;
+                            for cell in &mut row.cells {
+                                let in_cell = nested(&mut cell.style, &in_row)?;
+                                for span in cell.paragraphs.iter_mut().flat_map(|p| &mut p.spans) {
+                                    nested(&mut span.style, &in_cell)?;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             for message in changes {

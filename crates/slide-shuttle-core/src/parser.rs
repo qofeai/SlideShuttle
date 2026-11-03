@@ -71,6 +71,55 @@ const PROPS: &[&str] = &[
     "marker-end",
     "stroke-linecap",
     "stroke-linejoin",
+    "border-top",
+    "border-right",
+    "border-bottom",
+    "border-left",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+    "border-top-style",
+    "border-right-style",
+    "border-bottom-style",
+    "border-left-style",
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
+];
+/// Properties a table Cell may set; a Row may also set `height`.
+const CELL_PROPS: &[&str] = &[
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "line-height",
+    "color",
+    "text-align",
+    "letter-spacing",
+    "text-decoration",
+    "background",
+    "vertical-align",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "border-width",
+    "border-style",
+    "border-color",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+    "border-top-style",
+    "border-right-style",
+    "border-bottom-style",
+    "border-left-style",
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
 ];
 /// Properties a `Span` or `A` may set; `background` (from `background-color`) is a highlight.
 const SPAN_PROPS: &[&str] = &[
@@ -568,21 +617,7 @@ impl<'a> Context<'a> {
         attrs(n, &allowed)?;
         let id = format!("{prefix}{}", required(n, "id")?);
         self.claim(&id)?;
-        let mut style = Css::new();
-        if let Some(class) = n.attribute("class") {
-            for name in class.split_whitespace() {
-                style.extend(
-                    self.css(
-                        self.classes
-                            .get(name)
-                            .ok_or_else(|| invalid(format!("unknown class {name}")))?,
-                    )?,
-                );
-            }
-        }
-        if let Some(s) = n.attribute("style") {
-            style.extend(self.css(&substitute(s, params)?)?);
-        }
+        let style = self.style_of(n, params)?;
         let kind = match tag {
             "Box" => Kind::Box,
             "Group" => Kind::Group,
@@ -617,45 +652,7 @@ impl<'a> Context<'a> {
                 }
             }
             "Table" => {
-                let mut rows = Vec::new();
-                for row in n.children().filter(|x| x.is_element()) {
-                    if row.tag_name().name() != "Row" {
-                        return Err(invalid("Table children must be Row"));
-                    }
-                    attrs(row, &[])?;
-                    let mut cells = Vec::new();
-                    for c in row.children().filter(|x| x.is_element()) {
-                        if c.tag_name().name() != "Cell" {
-                            return Err(invalid("Row children must be Cell"));
-                        }
-                        attrs(c, &[])?;
-                        cells.push(substitute(&plain(c), params)?);
-                    }
-                    rows.push(cells);
-                }
-                if rows.is_empty()
-                    || rows[0].is_empty()
-                    || rows.iter().any(|r| r.len() != rows[0].len())
-                {
-                    return Err(invalid("Table requires rectangular, nonempty rows"));
-                }
-                let columns = n
-                    .attribute("columns")
-                    .map(|s| {
-                        s.split_whitespace()
-                            .map(|x| {
-                                x.parse::<f32>()
-                                    .map_err(|_| invalid("invalid table column ratio"))
-                            })
-                            .collect::<Result<Vec<_>>>()
-                    })
-                    .transpose()?
-                    .unwrap_or_else(|| vec![1.0; rows[0].len()]);
-                if columns.len() != rows[0].len()
-                    || columns.iter().any(|v| !v.is_finite() || *v <= 0.0)
-                {
-                    return Err(invalid("invalid table column ratios"));
-                }
+                let (rows, columns) = self.table(n, params)?;
                 Kind::Table { rows, columns }
             }
             "Chart" => {
@@ -778,6 +775,136 @@ impl<'a> Context<'a> {
             }
         }
         Ok(out)
+    }
+    /// `class` styles, then the inline `style`.
+    fn style_of(&self, n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<Css> {
+        let mut style = Css::new();
+        if let Some(class) = n.attribute("class") {
+            for name in class.split_whitespace() {
+                style.extend(
+                    self.css(
+                        self.classes
+                            .get(name)
+                            .ok_or_else(|| invalid(format!("unknown class {name}")))?,
+                    )?,
+                );
+            }
+        }
+        if let Some(s) = n.attribute("style") {
+            style.extend(self.css(&substitute(s, params)?)?);
+        }
+        Ok(style)
+    }
+    /// Rows of Cells; spans must tile the column grid exactly.
+    fn table(
+        &self,
+        n: X<'_, '_>,
+        params: &BTreeMap<String, String>,
+    ) -> Result<(Vec<TableRow>, Vec<f32>)> {
+        let mut rows = Vec::new();
+        for row in n.children() {
+            if row.is_text() && !row.text().unwrap_or("").trim().is_empty() {
+                return Err(invalid("Table text must be inside a Cell"));
+            }
+            if !row.is_element() {
+                continue;
+            }
+            if row.tag_name().name() != "Row" {
+                return Err(invalid("Table children must be Row"));
+            }
+            attrs(row, &["style", "class"])?;
+            let style = self.style_of(row, params)?;
+            if let Some(k) = style
+                .keys()
+                .find(|k| *k != "height" && !CELL_PROPS.contains(&k.as_str()))
+            {
+                return Err(invalid(format!("Row style does not take {k}")));
+            }
+            let mut cells = Vec::new();
+            for c in row.children() {
+                if c.is_text() && !c.text().unwrap_or("").trim().is_empty() {
+                    return Err(invalid("Row text must be inside a Cell"));
+                }
+                if !c.is_element() {
+                    continue;
+                }
+                if c.tag_name().name() != "Cell" {
+                    return Err(invalid("Row children must be Cell"));
+                }
+                attrs(c, &["style", "class", "colspan", "rowspan"])?;
+                let style = self.style_of(c, params)?;
+                if let Some(k) = style.keys().find(|k| !CELL_PROPS.contains(&k.as_str())) {
+                    return Err(invalid(format!("Cell style does not take {k}")));
+                }
+                let span = |k: &str| {
+                    c.attribute(k)
+                        .map_or(Some(1), |v| v.parse::<usize>().ok())
+                        .filter(|v| (1..=50).contains(v))
+                        .ok_or_else(|| invalid(format!("{k} must be 1–50")))
+                };
+                cells.push(TableCell {
+                    paragraphs: self.paragraphs(c, params)?,
+                    style,
+                    colspan: span("colspan")?,
+                    rowspan: span("rowspan")?,
+                });
+            }
+            rows.push(TableRow { style, cells });
+        }
+        let first = rows
+            .first()
+            .map(|r| r.cells.iter().map(|c| c.colspan).sum::<usize>())
+            .unwrap_or(0);
+        let columns = match n.attribute("columns") {
+            Some(s) => s
+                .split_whitespace()
+                .map(|x| {
+                    x.parse::<f32>()
+                        .ok()
+                        .filter(|v| v.is_finite() && *v > 0.0)
+                        .ok_or_else(|| invalid("table column ratios must be positive numbers"))
+                })
+                .collect::<Result<Vec<_>>>()?,
+            None => vec![1.0; first],
+        };
+        if rows.is_empty() || columns.is_empty() || rows.len() > 200 || columns.len() > 50 {
+            return Err(invalid("a Table needs 1–200 rows and 1–50 columns"));
+        }
+        // Each row must fill every column not covered by a rowspan from above.
+        let mut covered = vec![vec![false; columns.len()]; rows.len()];
+        for (r, row) in rows.iter().enumerate() {
+            let mut col = 0;
+            for cell in &row.cells {
+                while col < columns.len() && covered[r][col] {
+                    col += 1;
+                }
+                if col + cell.colspan > columns.len() || r + cell.rowspan > rows.len() {
+                    return Err(invalid(format!(
+                        "row {} has a cell spanning past the table's {} columns or {} rows",
+                        r + 1,
+                        columns.len(),
+                        rows.len()
+                    )));
+                }
+                for line in covered.iter_mut().skip(r).take(cell.rowspan) {
+                    for slot in line.iter_mut().skip(col).take(cell.colspan) {
+                        if *slot {
+                            return Err(invalid(format!("row {} has overlapping cells", r + 1)));
+                        }
+                        *slot = true;
+                    }
+                }
+                col += cell.colspan;
+            }
+            if covered[r].iter().any(|c| !c) {
+                return Err(invalid(format!(
+                    "row {} does not fill all {} columns",
+                    r + 1,
+                    columns.len()
+                )));
+            }
+        }
+        Ok((rows, columns))
     }
     fn block_style(&self, n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<Css> {
         let style = self.css(&substitute(n.attribute("style").unwrap_or(""), params)?)?;
@@ -972,15 +1099,15 @@ fn declare(map: &mut Css, k: &str, v: &str) -> Result<()> {
             set("row-gap", row);
             set("column-gap", column);
         }
-        "border" => {
+        "border" | "border-top" | "border-right" | "border-bottom" | "border-left" => {
             let [width, style @ ("solid" | "dashed" | "dotted"), color] = p[..] else {
-                return Err(invalid(
-                    "border syntax: <length> solid|dashed|dotted <color>",
-                ));
+                return Err(invalid(format!(
+                    "{k} syntax: <length> solid|dashed|dotted <color>"
+                )));
             };
-            set("border-width", width);
-            set("border-style", style);
-            set("border-color", color);
+            set(&format!("{k}-width"), width);
+            set(&format!("{k}-style"), style);
+            set(&format!("{k}-color"), color);
         }
         "background-color" => {
             set("background", v);

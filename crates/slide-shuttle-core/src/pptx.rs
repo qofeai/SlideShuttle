@@ -514,7 +514,12 @@ fn write_item(
                 }
             )
         }
-        Draw::Table { rows, columns, .. } => table(item, ident, rows, columns)?,
+        Draw::Table {
+            grid,
+            columns,
+            rows,
+            ..
+        } => table(item, ident, (grid, columns, rows), rels)?,
         Draw::Chart {
             chart_type,
             labels,
@@ -705,33 +710,85 @@ fn run_props(s: &TextStyle, css: &Css, link: Option<&str>) -> Result<String> {
             .unwrap_or_default()
     ))
 }
-fn table(item: &Item, id: u32, rows: &[Vec<String>], columns: &[f32]) -> Result<String> {
-    let sum: f32 = columns.iter().sum();
+/// A native table: spans as gridSpan/rowSpan with hMerge/vMerge on covered cells.
+fn table(
+    item: &Item,
+    id: u32,
+    (cells, columns, rows): (&[CellBox], &[f32], &[f32]),
+    rels: &mut Vec<(String, String, String)>,
+) -> Result<String> {
     let grid = columns
         .iter()
-        .map(|c| format!("<a:gridCol w=\"{}\"/>", emu(item.rect.width * c / sum)))
+        .map(|w| format!("<a:gridCol w=\"{}\"/>", emu(*w)))
         .collect::<String>();
+    let line = |tag: &str, b: &CellBorder| {
+        if b.width <= 0.0 || b.color.3 == 0 {
+            return format!("<a:{tag} w=\"0\"><a:noFill/></a:{tag}>");
+        }
+        let dash = match b.dash {
+            Dash::Solid => "solid",
+            Dash::Dashed => "dash",
+            Dash::Dotted => "sysDot",
+        };
+        format!(
+            "<a:{tag} w=\"{}\">{}<a:prstDash val=\"{dash}\"/></a:{tag}>",
+            emu(b.width),
+            fill(b.color, 1.0)
+        )
+    };
     let mut body = String::new();
-    for (ri, row) in rows.iter().enumerate() {
-        body.push_str(&format!(
-            "<a:tr h=\"{}\">",
-            emu(item.rect.height / rows.len() as f32)
-        ));
-        for value in row {
-            body.push_str(&format!("<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>{}</a:txBody><a:tcPr marL=\"76200\" marR=\"76200\" marT=\"57150\" marB=\"57150\">",paragraphs(&[Paragraph::plain(value.clone())],&item.text_style,1.0,&mut Vec::new())?));
-            for side in ["lnL", "lnR", "lnT", "lnB"] {
-                body.push_str(&format!("<a:{side} w=\"9525\"><a:solidFill><a:srgbClr val=\"D2D9E3\"/></a:solidFill></a:{side}>"));
+    for (r, height) in rows.iter().enumerate() {
+        body.push_str(&format!("<a:tr h=\"{}\">", emu(*height)));
+        for c in 0..columns.len() {
+            let owner = cells
+                .iter()
+                .find(|b| {
+                    (b.row..b.row + b.rowspan).contains(&r)
+                        && (b.col..b.col + b.colspan).contains(&c)
+                })
+                .ok_or_else(|| invalid("table grid has an uncovered cell"))?;
+            let mut attrs = String::new();
+            if r == owner.row && c == owner.col {
+                if owner.colspan > 1 {
+                    attrs.push_str(&format!(" gridSpan=\"{}\"", owner.colspan));
+                }
+                if owner.rowspan > 1 {
+                    attrs.push_str(&format!(" rowSpan=\"{}\"", owner.rowspan));
+                }
+            } else {
+                if c == owner.col && owner.colspan > 1 {
+                    attrs.push_str(&format!(" gridSpan=\"{}\"", owner.colspan));
+                }
+                if c > owner.col {
+                    attrs.push_str(" hMerge=\"1\"");
+                }
+                if r > owner.row {
+                    attrs.push_str(" vMerge=\"1\"");
+                }
             }
+            let text = if r == owner.row && c == owner.col {
+                paragraphs(&owner.paragraphs, &owner.text_style, 1.0, rels)?
+            } else {
+                String::new()
+            };
+            let [t, rr, b, l] = owner.padding;
             body.push_str(&format!(
-                "{}</a:tcPr></a:tc>",
-                fill(
-                    if ri == 0 {
-                        Color(235, 240, 248, 255)
-                    } else {
-                        Color::WHITE
-                    },
-                    1.0
-                )
+                "<a:tc{attrs}><a:txBody><a:bodyPr/><a:lstStyle/>{}</a:txBody><a:tcPr marL=\"{}\" marR=\"{}\" marT=\"{}\" marB=\"{}\" anchor=\"{}\">{}{}{}{}{}</a:tcPr></a:tc>",
+                if text.is_empty() { "<a:p/>".into() } else { text },
+                emu(l),
+                emu(rr),
+                emu(t),
+                emu(b),
+                match owner.anchor {
+                    VerticalAlign::Top => "t",
+                    VerticalAlign::Middle => "ctr",
+                    VerticalAlign::Bottom => "b",
+                },
+                line("lnL", &owner.borders[3]),
+                line("lnR", &owner.borders[1]),
+                line("lnT", &owner.borders[0]),
+                line("lnB", &owner.borders[2]),
+                fill(owner.fill, 1.0)
             ));
         }
         body.push_str("</a:tr>");

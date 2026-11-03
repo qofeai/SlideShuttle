@@ -644,6 +644,87 @@ fn icons_and_clipped_images_render_export_and_import() {
     );
 }
 #[test]
+fn tables_span_style_collapse_borders_and_round_trip() {
+    let source = doc(
+        r##"<Table id="t" columns="2 1 1" style="position:absolute;left:20px;top:20px;width:400px;font-size:16px;line-height:22px;border:1px solid #CBD5E1">
+          <Row style="background:#0F172A;color:#FFFFFF;font-weight:700"><Cell rowspan="2">Item</Cell><Cell colspan="2" style="text-align:center">Quarter</Cell></Row>
+          <Row style="background:#0F172A;color:#FFFFFF"><Cell>Q1</Cell><Cell>Q2</Cell></Row>
+          <Row style="height:60px"><Cell><List><Item>one</Item><Item>two</Item><Item>three</Item></List></Cell><Cell style="vertical-align:top">12</Cell><Cell style="background:#DCFCE7">18</Cell></Row>
+          <Row style="border-top:3px dashed #DC2626"><Cell>Total</Cell><Cell>30</Cell><Cell>36</Cell></Row>
+        </Table>"##,
+    );
+    let (_, r, s, pptx) = compile(&source);
+    let item = &s.pages[0].items[0];
+    let Draw::Table { grid, rows, .. } = &item.kind else {
+        panic!("expected a table")
+    };
+    assert_eq!(grid.len(), 10);
+    assert!(
+        rows[2] > 60.0,
+        "a row height is a minimum; three list lines grow it"
+    );
+    let total = grid.iter().find(|c| c.row == 3 && c.col == 1).unwrap();
+    let above = grid.iter().find(|c| c.row == 2 && c.col == 1).unwrap();
+    assert_eq!(total.borders[0].width, 3.0);
+    assert_eq!(
+        above.borders[2], total.borders[0],
+        "a shared edge resolves to one border"
+    );
+    let slide = String::from_utf8(zip_read(&pptx)["ppt/slides/slide1.xml"].clone()).unwrap();
+    for native in [
+        r#"<a:tc rowSpan="2">"#,
+        r#"<a:tc gridSpan="2">"#,
+        r#"<a:tc hMerge="1">"#,
+        r#"<a:tc vMerge="1">"#,
+        r#"anchor="t""#,
+        r#"<a:lnT w="28575"><a:solidFill><a:srgbClr val="DC2626">"#,
+        "<a:buChar",
+    ] {
+        assert!(slide.contains(native), "{native}");
+    }
+    let imported = import::import_pptx(&pptx).unwrap();
+    assert!(
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r).unwrap();
+    let (a, b) = (
+        image::load_from_memory(&render::render_png(&s, 0, &r, 1.0).unwrap())
+            .unwrap()
+            .to_rgba8(),
+        image::load_from_memory(&render::render_png(&again, 0, &r, 1.0).unwrap())
+            .unwrap()
+            .to_rgba8(),
+    );
+    let off = a
+        .pixels()
+        .zip(b.pixels())
+        .filter(|(x, y)| x.0.iter().zip(y.0).any(|(p, q)| p.abs_diff(q) > 16))
+        .count();
+    assert!(off < 20, "{off} pixels differ after export → import");
+    for (inner, why) in [
+        (
+            r#"<Table id="t"><Row><Cell colspan="2">a</Cell></Row><Row><Cell>b</Cell></Row></Table>"#,
+            "row not filled",
+        ),
+        (
+            r#"<Table id="t" columns="1 1"><Row><Cell rowspan="3">a</Cell><Cell>b</Cell></Row></Table>"#,
+            "span past the table",
+        ),
+        (
+            r#"<Table id="t"><Row><Cell style="width:9px">a</Cell></Row></Table>"#,
+            "layout property on a cell",
+        ),
+        (
+            r#"<Table id="t"><Row>loose<Cell>a</Cell></Row></Table>"#,
+            "text outside a cell",
+        ),
+    ] {
+        assert!(parse(&doc(inner)).is_err(), "{why}");
+    }
+}
+#[test]
 fn declared_font_family_must_be_in_its_file() {
     let mut r = resources();
     r.fonts[0].family = Some("Brand".into());
