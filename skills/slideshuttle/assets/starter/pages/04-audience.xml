@@ -1,4 +1,4 @@
-<Slide id="audience" background="#EEF4F0">
+<Slide id="audience" type="content" background="#EEF4F0">
   <Box id="frame" class="frame">
     <Text id="kicker" class="kicker">03 / DESIGN FOR THE READING SITUATION</Text>
     <Text id="title" class="heading">阅读场景决定信息密度。</Text>

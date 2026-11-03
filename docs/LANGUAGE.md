@@ -64,7 +64,7 @@ deck/
 
 ## 布局属性
 
-全部盒子采用 border-box。默认 display 是 block。当前属性值中不支持 calc、viewport 单位、rem/em、完整 minmax/repeat、媒体查询、自动分页、阴影、复杂滤镜和动画。
+全部盒子采用 border-box。默认 display 是 block。当前属性值中不支持 calc、viewport 单位、rem/em、完整 minmax/repeat、媒体查询、自动分页和复杂滤镜。放映动画见“放映”。
 
 | 属性组 | 支持 |
 |---|---|
@@ -135,6 +135,37 @@ deck/
 - 颜色：Series `color`（饼图/环形图用 `colors`，每个扇区一个）；缺省按 `chart-colors`（可放进 Style，跨页一致）循环取色，再缺省为内置 8 色。文字颜色、字号和字体继承自普通文字样式，网格线与坐标轴线由文字颜色淡化得出；`background` 与实线 `border` 作为图表区底色与边框。
 - 导入时还原上述全部类型和选项；三维、股价、雷达等其它图表类型、次坐标轴、散点连线和趋势线会作为损失报告。
 
+## 放映
+
+```xml
+<Deck … transition="fade">
+  <Slide id="market" type="content" transition="push left fast">
+    <Text id="claim" …>…</Text>
+    <Group id="proof" …>…</Group>
+    <Animate target="claim" effect="fade-in"/>
+    <Animate target="proof" effect="fly-in" direction="up" trigger="after-previous" duration="0.6s" easing="ease-out"/>
+    <Notes>
+      先说结论。
+      再指出三个证据。
+    </Notes>
+  </Slide>
+```
+
+这些只影响放映和 PPTX，不改变静态页面、PNG 和 PDF。
+
+- 页面类型 `type="cover|contents|section|content|end"`，在 PPTX 中对应同名版式（封面为 title、章节为 secHead 等），便于在 PowerPoint 中按版式识别页面。
+- 切换 `transition="<种类> [方向] [速度]"`：种类为 fade、push、wipe、cover、split、zoom、cut；push / wipe / cover 可带 up/down/left/right（缺省 left）；速度 fast / medium / slow。Deck 上的 `transition` 是各页默认值，Slide 写 `none` 取消。
+- `<Animate>` 按书写顺序编排，写在 Slide 的直接子级。`target` 是本页的叶子元素或 Group；带子元素的 Box 不能整体动画，需要一起动的内容放进 Group。
+  - 入场：appear、fade-in、fly-in、zoom-in、wipe-in、float-in、peek-in、rise-in。
+  - 强调：pulse、grow-shrink（放大 1.5 倍并保持）、spin、teeter、fill-color（`color` 必填，保持）、transparency（`amount` 0–1 必填，保持）、color-pulse（`color` 必填）。
+  - 退出：disappear、fade-out、fly-out、zoom-out、wipe-out、float-out。
+  - 路径：motion-path，`path` 是相对元素当前位置的 SVG 路径（px），从 `M 0 0` 开始，只有一个子路径。
+- `trigger`：`click`（默认，开始新的一次点击）、`with-previous`（与上一项同时）、`after-previous`（上一项结束后）。页面第一项不是 click 时，进入页面就自动播放。
+- `direction` 只用于 fly、wipe、peek、float（float 只有 up/down），表示运动方向，例如 `fly-in direction="up"` 从页面下方向上飞入；缺省 up。`duration`、`delay` 写 `500ms` 或 `0.5s`；appear / disappear 没有时长。`easing` 为 linear / ease-in / ease-out / ease-in-out；`repeat` 为 1–100。
+- 首个动画是入场效果的元素在放映开始时隐藏。`render --steps` 另存每页放映的每一步：`slide-002-step-0.png` 是第一次点击前，`step-1` 是第一次点击后，依此类推。中间过程不画，只画每步结束时的状态（显隐、透明度、填充色、放大和路径终点）。
+- `<Notes>` 是演讲者备注，纯文本，每个非空行是一段，在 PPTX 中写成备注页。
+- 导入还原上述全部内容。原生组导入后展开，组上的动画改为在每个成员上播放，并报告为损失；按段落播放、点击形状触发等其它动画同样作为损失报告。
+
 ## 富文本
 
 一个 `Text` 要么只有行内内容（一个段落），要么只有 `P` 与 `List` 块；两者不能混放。
@@ -170,7 +201,7 @@ deck/
 
 PPTX 限压缩 64 MiB、4096 个条目、总展开 256 MiB、单 XML 16 MiB。拒绝 ZIP 路径穿越、重复条目、符号链接、DTD 与外部实体；外部关系只记录，不获取。图片、字体与渲染表面有独立大小限制。这些是资源预算，不是完整的恶意 Office 文件安全审计。
 
-导入重建文本、常用形状、受限自定义路径、图片、基本表格，以及有数值缓存的柱状/折线图；使用布局/母版定位占位符，现已解析主题色、颜色映射、常用变换、透明度与默认文字级联；完整主题效果、复杂段落和母版装饰仍有限。原生组几何折算后展开，不恢复组件。字体/段落/单元格的复杂局部格式、继承装饰、主题色、渐变、动画、批注、备注、媒体和其他扩展不能保证恢复。
+导入重建文本、常用形状、受限自定义路径、图片、基本表格，以及有数值缓存的柱状/折线图；使用布局/母版定位占位符，现已解析主题色、颜色映射、常用变换、透明度与默认文字级联；完整主题效果、复杂段落和母版装饰仍有限。原生组几何折算后展开，不恢复组件。页面切换、动画、备注和页面类型按“放映”一节还原；字体/段落/单元格的复杂局部格式、继承装饰、批注、媒体和其他扩展不能保证恢复。
 
 `losses.json` 是已经识别的损失；原生对象完整结构摘要与整包部件清单还用于保守比较。没有列出损失不等于任意文件通过视觉等价认证。导入后的新导出必须检查旁车比较结果，不支持把“再次编译成功”解释为无损往返。
 

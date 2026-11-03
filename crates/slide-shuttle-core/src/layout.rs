@@ -132,7 +132,21 @@ pub(crate) fn layout_with_text(
             id: slide.id.clone(),
             background: page_background(&slide.background, deck, resources)?,
             items: emitter.items,
+            show: slide.show.clone(),
         };
+        // An animation needs a drawn object to play on.
+        for a in &page.show.animations {
+            let drawn = page.items.iter().any(|i| {
+                i.id.strip_suffix("::background").unwrap_or(&i.id) == a.target
+                    && (!matches!(i.kind, Draw::Box) || i.fill.3 > 0 || i.stroke_width > 0.0)
+            });
+            if !drawn {
+                return Err(invalid(format!(
+                    "animation target {} draws nothing; give it a background or animate what it contains",
+                    a.target
+                )));
+            }
+        }
         for item in &page.items {
             let r = turned_bounds(item.rect, item.turn);
             if r.x < -0.5

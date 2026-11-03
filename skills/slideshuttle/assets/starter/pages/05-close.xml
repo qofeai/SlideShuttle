@@ -1,4 +1,4 @@
-<Slide id="close" background="#142B36">
+<Slide id="close" type="end" background="#142B36">
   <Box id="frame" class="frame" style="gap:28px">
     <Text id="kicker" class="kicker" style="color:#73D8C2">04 / A PRESENTATION IS A SEQUENCE OF DECISIONS</Text>
     <Text id="title" style="height:180px;font-size:62px;line-height:84px;font-weight:700;color:#F4F1E9">让每一页，<br/>推进一次理解。</Text>

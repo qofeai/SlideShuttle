@@ -67,6 +67,9 @@ enum Command {
         pdf: bool,
         #[arg(long, default_value_t = 1.0)]
         scale: f32,
+        /// Also draw animated slides before the first click and after each click.
+        #[arg(long)]
+        steps: bool,
     },
     Export {
         #[command(flatten)]
@@ -207,6 +210,7 @@ fn run(cli: Cli) -> Result<()> {
             pdf,
             scale,
             page,
+            steps,
         } => {
             let (doc, first) = compile(&input, page.as_deref())?;
             let (s, r) = (doc.scene(), doc.resources());
@@ -219,9 +223,26 @@ fn run(cli: Cli) -> Result<()> {
             let png = (0..s.pages.len())
                 .map(|i| render::render_png(s, i, r, scale))
                 .collect::<Result<Vec<_>>>()?;
+            let mut frames = Vec::new();
+            if steps {
+                for (i, p) in s.pages.iter().enumerate() {
+                    if p.show.animations.is_empty() {
+                        continue;
+                    }
+                    for (k, looks) in show::steps(&p.show).iter().enumerate() {
+                        frames.push((
+                            format!("slide-{:03}-step-{k}.png", first + i + 1),
+                            render::render_png_step(s, i, r, scale, looks)?,
+                        ));
+                    }
+                }
+            }
             let pdf = pdf.then(|| doc.render_pdf()).transpose()?;
             for (i, b) in png.iter().enumerate() {
                 io::write_new(&out.join(format!("slide-{:03}.png", first + i + 1)), b)?;
+            }
+            for (name, b) in &frames {
+                io::write_new(&out.join(name), b)?;
             }
             if let Some(pdf) = pdf {
                 io::write_new(&out.join("deck.pdf"), &pdf)?;

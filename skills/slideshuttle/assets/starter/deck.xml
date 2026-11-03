@@ -1,4 +1,4 @@
-<Deck title="从内容到一份清晰的演示" width="1280px" height="720px" font-family="Noto Sans CJK SC">
+<Deck title="从内容到一份清晰的演示" width="1280px" height="720px" font-family="Noto Sans CJK SC" transition="fade">
   <Library src="design.xml"/>
   <Slide src="pages/01-cover.xml"/>
   <Slide src="pages/02-structure.xml"/>

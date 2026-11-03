@@ -34,6 +34,7 @@ Slide 使用全稿唯一、稳定的 ASCII 语义 ID；普通节点只需在本�
 | 填充 | 纯色/RGBA、任意角度线性渐变或径向渐变（2–8 色标）；页面背景还可用 `url(图片)` |
 | 质感 | `box-shadow` 单个外阴影；`border-style:dashed/dotted`；线条/Path 的 `marker-end:arrow` 等箭头；`transform:rotate()` 与镜像只用于叶子 |
 | 复合对象 | 一层 Group；不要嵌套 Group 或设置组级透明度 |
+| 放映 | Deck `transition="fade"` 统一翻页切换；Slide `type`（cover/contents/section/content/end）；`<Notes>` 写讲稿；`<Animate target effect trigger>` 写在 Slide 末尾，要一起出现的内容放进 Group。每页 1–3 次点击为宜，优先 fade-in、fly-in、wipe-in；用 `render --steps` 检查出场顺序 |
 
 不要使用 React/JS、完整 HTML、CSS 选择器、calc、rem/em、repeat/minmax、box-shadow、滤镜、自动分页等未支持的能力。Span 允许字体、字号、字重、斜体、行高、颜色、字间距、下划线/删除线、上下标和高亮，不承担布局与对齐。Table/Chart/容器没有整体 opacity。新需求先核对语法，再决定用可用构图替代或说明限制。
 
