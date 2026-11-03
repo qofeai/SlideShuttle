@@ -126,7 +126,8 @@ fn tokens_entities_and_components_are_bounded() {
     assert!(parse(r#"<!DOCTYPE Deck [<!ENTITY x "bad">]><Deck><Slide id="p"/></Deck>"#).is_err());
     assert!(parse(r#"<Deck><Token name="x" value="var(--x)"/><Slide id="p"><Box id="b" style="width:var(--x)"/></Slide></Deck>"#).is_err());
     assert!(parse(r#"<Deck><Component name="C"><Use id="r" component="C"/></Component><Slide id="p"><Use id="x" component="C"/></Slide></Deck>"#).is_err());
-    assert!(parse(&doc(r#"<Path id="x" d="m 1 2 l 3 4"/>"#)).is_err());
+    assert!(parse(&doc(r#"<Path id="x" d="m 1 2 l 3 4"/>"#)).is_ok());
+    assert!(parse(&doc(r#"<Path id="x" d="M 1 2 Q 3"/>"#)).is_err());
 }
 #[test]
 fn later_declarations_override_shorthands_like_css() {
@@ -533,6 +534,114 @@ fn preset_shapes_are_native_and_round_trip() {
         let failed = parse(&doc(inner)).and_then(|d| layout(&d, &resources()).map(|_| ()));
         assert!(failed.is_err(), "{why}");
     }
+}
+const ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>"#;
+#[test]
+fn icons_and_clipped_images_render_export_and_import() {
+    let mut r = resources();
+    r.images
+        .insert("icons/check.svg".into(), ICON.as_bytes().to_vec());
+    r.images
+        .insert("photo.png".into(), png([9, 168, 143, 255], 80, 40));
+    let source = doc(
+        r##"<Icon id="check" src="icons/check.svg" style="position:absolute;left:20px;top:20px;width:96px;height:96px;color:#DC2626"/>
+        <Image id="avatar" src="photo.png" style="position:absolute;left:160px;top:20px;width:100px;height:100px;object-fit:cover;border-radius:50%;border:3px solid #0F172A"/>
+        <Image id="hex" src="photo.png" shape="hexagon" style="position:absolute;left:300px;top:20px;width:120px;height:100px;object-fit:cover;object-position:left center"/>
+        <Path id="wave" d="M 0 50 q 25 -50 50 0 t 50 0 A 20 20 0 0 1 140 50" viewBox="140 60" style="position:absolute;left:20px;top:160px;width:280px;height:120px;border:4px solid #2563EB;stroke-linecap:round"/>"##,
+    );
+    let d = parse(&source).unwrap();
+    let s = layout(&d, &r).unwrap();
+    assert!(!s.has_errors(), "{:?}", s.diagnostics);
+    let page = image::load_from_memory(&render::render_png(&s, 0, &r, 1.0).unwrap())
+        .unwrap()
+        .to_rgba8();
+    assert_eq!(
+        page.get_pixel(68, 32).0[..3],
+        [220, 38, 38],
+        "the circle stroke takes the icon color"
+    );
+    assert_eq!(
+        page.get_pixel(68, 48).0,
+        [255, 255, 255, 255],
+        "an outline icon is not filled"
+    );
+    assert_eq!(
+        page.get_pixel(163, 23).0,
+        [255, 255, 255, 255],
+        "the avatar corner is clipped away"
+    );
+    assert_eq!(
+        page.get_pixel(210, 70).0,
+        [9, 168, 143, 255],
+        "the avatar center shows the image"
+    );
+    let parts = zip_read(&export_pptx(&s, &r, "media").unwrap());
+    let slide = String::from_utf8(parts["ppt/slides/slide1.xml"].clone()).unwrap();
+    for native in [
+        r#"<a:path w="96000" h="96000" fill="none" stroke="1">"#,
+        r#"cap="rnd""#,
+        "<a:round/>",
+        r#"<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val 50000"/>"#,
+        r#"<a:prstGeom prst="hexagon">"#,
+        r#"<a:srcRect l="0" r="40000""#,
+    ] {
+        assert!(slide.contains(native), "{native}");
+    }
+    let imported = import::import_pptx(&zip_write(&parts)).unwrap();
+    assert!(
+        imported.snapshot.losses.is_empty(),
+        "{:?}",
+        imported.snapshot.losses
+    );
+    let page_xml = &imported.files["pages/page-1.xml"];
+    assert!(page_xml.contains(r#"shape="hexagon""#) && page_xml.contains("stroke-linecap:round"));
+    let mut r2 = r.clone();
+    r2.images.extend(imported.assets.clone());
+    let again = layout(&parse_files("deck.xml", &imported.files).unwrap(), &r2).unwrap();
+    let back = image::load_from_memory(&render::render_png(&again, 0, &r2, 1.0).unwrap())
+        .unwrap()
+        .to_rgba8();
+    let off = page
+        .pixels()
+        .zip(back.pixels())
+        .filter(|(a, b)| a.0.iter().zip(b.0).any(|(x, y)| x.abs_diff(y) > 16))
+        .count();
+    assert!(off < 200, "{off} pixels differ after export → import");
+    for (inner, why) in [
+        (
+            r##"<Icon id="i" src="icons/check.svg" style="width:9px;height:9px;background:#000"/>"##,
+            "icon background",
+        ),
+        (
+            r#"<Image id="i" src="photo.png" shape="hexagon" style="width:9px;height:9px;border-radius:2px"/>"#,
+            "radius on a clipped image",
+        ),
+        (
+            r#"<Path id="p" d="M 0 0 L" viewBox="10 10"/>"#,
+            "broken path data",
+        ),
+    ] {
+        let mut r = r.clone();
+        r.images
+            .insert("icons/check.svg".into(), ICON.as_bytes().to_vec());
+        let failed = parse(&doc(inner)).and_then(|d| layout(&d, &r).map(|_| ()));
+        assert!(failed.is_err(), "{why}");
+    }
+    let mut bad = resources();
+    bad.images.insert(
+        "icons/x.svg".into(),
+        br#"<svg viewBox="0 0 2 2"><text>x</text></svg>"#.to_vec(),
+    );
+    let failed = layout(
+        &parse(&doc(r#"<Icon id="x" src="icons/x.svg"/>"#)).unwrap(),
+        &bad,
+    );
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("<text> is not supported")
+    );
 }
 #[test]
 fn declared_font_family_must_be_in_its_file() {

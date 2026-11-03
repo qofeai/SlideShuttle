@@ -58,6 +58,7 @@ const PROPS: &[&str] = &[
     "border-radius",
     "opacity",
     "object-fit",
+    "object-position",
     "box-sizing",
     "white-space",
     "letter-spacing",
@@ -68,6 +69,8 @@ const PROPS: &[&str] = &[
     "transform",
     "marker-start",
     "marker-end",
+    "stroke-linecap",
+    "stroke-linejoin",
 ];
 /// Properties a `Span` or `A` may set; `background` (from `background-color`) is a highlight.
 const SPAN_PROPS: &[&str] = &[
@@ -554,7 +557,8 @@ impl<'a> Context<'a> {
         }
         let mut allowed = vec!["id", "class", "style"];
         allowed.extend_from_slice(match tag {
-            "Image" => &["src"][..],
+            "Image" => &["src", "shape", "adjust"][..],
+            "Icon" => &["src"],
             "Shape" => &["shape", "adjust"],
             "Path" => &["d", "viewBox"],
             "Table" => &["columns"],
@@ -587,38 +591,14 @@ impl<'a> Context<'a> {
             },
             "Image" => Kind::Image {
                 src: substitute(required(n, "src")?, params)?,
+                clip: shape_kind(n, params)?,
             },
-            "Shape" => {
-                let preset = n.attribute("shape").unwrap_or("rect");
-                if !crate::preset::exists(preset) {
-                    return Err(invalid(format!(
-                        "unknown Shape shape {preset}; use an OOXML preset name such as rect, ellipse, line, triangle, rightArrow, star5 or wedgeRoundRectCallout"
-                    )));
-                }
-                let adjust = substitute(n.attribute("adjust").unwrap_or(""), params)?
-                    .split_whitespace()
-                    .map(|v| {
-                        v.parse::<f64>()
-                            .ok()
-                            .filter(|v| v.is_finite())
-                            .ok_or_else(|| invalid(format!("invalid adjust value {v}")))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let names = crate::preset::adjust_names(preset);
-                if adjust.len() > names.len() {
-                    return Err(invalid(format!(
-                        "{preset} takes at most {} adjust values ({})",
-                        names.len(),
-                        names.join(" ")
-                    )));
-                }
-                Kind::Shape {
-                    shape: ShapeKind {
-                        preset: preset.into(),
-                        adjust,
-                    },
-                }
-            }
+            "Icon" => Kind::Icon {
+                src: substitute(required(n, "src")?, params)?,
+            },
+            "Shape" => Kind::Shape {
+                shape: shape_kind(n, params)?,
+            },
             "Path" => {
                 let vals = n
                     .attribute("viewBox")
@@ -735,7 +715,7 @@ impl<'a> Context<'a> {
         };
         if matches!(
             kind,
-            Kind::Image { .. } | Kind::Shape { .. } | Kind::Path { .. }
+            Kind::Image { .. } | Kind::Icon { .. } | Kind::Shape { .. } | Kind::Path { .. }
         ) && n
             .children()
             .any(|c| c.is_element() || c.is_text() && !c.text().unwrap_or("").trim().is_empty())
@@ -1011,6 +991,37 @@ fn declare(map: &mut Css, k: &str, v: &str) -> Result<()> {
     }
     Ok(())
 }
+/// `shape` (an OOXML preset, default rect) and `adjust` attributes of a Shape or Image.
+fn shape_kind(n: X<'_, '_>, params: &BTreeMap<String, String>) -> Result<ShapeKind> {
+    let preset = n.attribute("shape").unwrap_or("rect");
+    if !crate::preset::exists(preset) {
+        return Err(invalid(format!(
+            "unknown {} shape {preset}; use an OOXML preset name such as rect, ellipse, line, triangle, rightArrow, star5 or wedgeRoundRectCallout",
+            n.tag_name().name()
+        )));
+    }
+    let adjust = substitute(n.attribute("adjust").unwrap_or(""), params)?
+        .split_whitespace()
+        .map(|v| {
+            v.parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite())
+                .ok_or_else(|| invalid(format!("invalid adjust value {v}")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let names = crate::preset::adjust_names(preset);
+    if adjust.len() > names.len() {
+        return Err(invalid(format!(
+            "{preset} takes at most {} adjust values ({})",
+            names.len(),
+            names.join(" ")
+        )));
+    }
+    Ok(ShapeKind {
+        preset: preset.into(),
+        adjust,
+    })
+}
 fn plain(n: X<'_, '_>) -> String {
     n.descendants()
         .filter(|n| n.is_text())
@@ -1027,24 +1038,7 @@ fn substitute(s: &str, params: &BTreeMap<String, String>) -> Result<String> {
     }
     Ok(out)
 }
+/// Full SVG path data: relative commands, H/V, S/T, Q and arcs are all accepted.
 fn validate_path(data: &str) -> Result<()> {
-    let mut count = 0;
-    for seg in svgtypes::PathParser::from(data) {
-        use svgtypes::PathSegment::*;
-        let seg = seg.map_err(|e| invalid(format!("invalid Path: {e}")))?;
-        if !matches!(
-            seg,
-            MoveTo { abs: true, .. }
-                | LineTo { abs: true, .. }
-                | CurveTo { abs: true, .. }
-                | ClosePath { .. }
-        ) {
-            return Err(invalid("Path supports absolute M/L/C/Z only"));
-        }
-        count += 1;
-    }
-    if count == 0 || count > 10000 {
-        return Err(invalid("Path must have 1–10000 segments"));
-    }
-    Ok(())
+    crate::icon::path_commands(data).map(|_| ())
 }

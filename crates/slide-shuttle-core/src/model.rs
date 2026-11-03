@@ -105,6 +105,12 @@ pub enum Kind {
     },
     Image {
         src: String,
+        /// Clip geometry; `rect` with border-radius for rounded corners.
+        clip: ShapeKind,
+    },
+    /// A single-color SVG icon drawn in the text color.
+    Icon {
+        src: String,
     },
     Shape {
         shape: ShapeKind,
@@ -123,6 +129,28 @@ pub enum Kind {
         series: Vec<Series>,
     },
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FitMode {
+    #[default]
+    Contain,
+    Cover,
+    Fill,
+}
+/// `object-fit` and `object-position`: where the image sits in the free space, 0 to 1 per axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageFit {
+    pub mode: FitMode,
+    pub position: [f32; 2],
+}
+impl Default for ImageFit {
+    fn default() -> Self {
+        Self {
+            mode: FitMode::Contain,
+            position: [0.5, 0.5],
+        }
+    }
+}
 /// An OOXML preset geometry (`rect`, `ellipse`, `line`, `rightArrow`, `star5`, …) and its
 /// adjust values in DrawingML units (usually 1/100000 of the frame).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -130,6 +158,14 @@ pub struct ShapeKind {
     pub preset: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adjust: Vec<f64>,
+}
+impl Default for ShapeKind {
+    fn default() -> Self {
+        Self {
+            preset: "rect".into(),
+            adjust: Vec::new(),
+        }
+    }
 }
 impl ShapeKind {
     pub fn is(&self, preset: &str) -> bool {
@@ -383,6 +419,8 @@ pub struct Item {
     pub stroke: Color,
     pub stroke_width: f32,
     pub dash: Dash,
+    pub line_cap: LineCap,
+    pub line_join: LineJoin,
     /// Line end decorations at the start and end of a line or path.
     pub markers: [Option<Marker>; 2],
     pub radius: f32,
@@ -404,6 +442,8 @@ impl Default for Item {
             stroke: Color::BLACK,
             stroke_width: 0.0,
             dash: Dash::Solid,
+            line_cap: LineCap::Butt,
+            line_join: LineJoin::Miter,
             markers: [None, None],
             radius: 0.0,
             opacity: 1.0,
@@ -430,6 +470,24 @@ pub enum Dash {
     Solid,
     Dashed,
     Dotted,
+}
+/// `stroke-linecap`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineCap {
+    #[default]
+    Butt,
+    Round,
+    Square,
+}
+/// `stroke-linejoin`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineJoin {
+    #[default]
+    Miter,
+    Round,
+    Bevel,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -479,8 +537,10 @@ pub enum Draw {
     },
     Image {
         src: String,
-        fit: String,
+        fit: ImageFit,
+        clip: ShapeKind,
     },
+    Icon(crate::icon::Icon),
     Table {
         rows: Vec<Vec<String>>,
         columns: Vec<f32>,

@@ -953,14 +953,33 @@ impl Reader<'_> {
                                 problems.insert("invalid image alphaModFix".into());
                             }
                         }
-                        // A picture keeps its transform and shadow; fill and border do not apply.
+                        // A picture keeps its transform, shadow, border and clip geometry.
                         let kept = css
                             .split(';')
-                            .filter(|d| d.starts_with("transform:") || d.starts_with("box-shadow:"))
+                            .filter(|d| {
+                                ["transform:", "box-shadow:", "border-"]
+                                    .iter()
+                                    .any(|p| d.starts_with(p))
+                            })
                             .map(|d| format!(";{d}"))
                             .collect::<String>();
+                        let clip = match desc(n, A, "prstGeom") {
+                            Some(geom) => match preset_shape(geom) {
+                                Some((preset, adjust)) if preset != "rect" => {
+                                    format!(" shape=\"{preset}\"{adjust}")
+                                }
+                                Some(_) => String::new(),
+                                None => {
+                                    problems.insert(
+                                        "picture clip geometry is not reconstructed".into(),
+                                    );
+                                    String::new()
+                                }
+                            },
+                            None => String::new(),
+                        };
                         format!(
-                            "<Image id=\"{import_id}\" src=\"{}\" style=\"{pos};object-fit:fill;opacity:{opacity}{}\"/>",
+                            "<Image id=\"{import_id}\" src=\"{}\"{clip} style=\"{pos};object-fit:fill;opacity:{opacity}{}\"/>",
                             xml(&asset),
                             xml(&kept)
                         )
@@ -1209,15 +1228,31 @@ impl Reader<'_> {
                 xml(css)
             )
         } else if let Some(custom) = desc(n, A, "custGeom") {
-            if let Some((data, vb)) = custom_path(custom) {
-                format!(
-                    "<Path id=\"{import_id}\" d=\"{}\" viewBox=\"{} {}\" style=\"{pos};{}{}\"/>",
-                    xml(&data),
-                    vb[0],
-                    vb[1],
-                    xml(css),
-                    markers(props)
-                )
+            if let Some(paths) = custom_paths(custom) {
+                // Sub-paths with their own fill/stroke flags become one Path each.
+                let single = paths.len() == 1;
+                paths
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let mut style = css.to_owned();
+                        if !p.fill {
+                            style.push_str(";background:transparent");
+                        }
+                        if !p.stroke {
+                            style.push_str(";border-width:0");
+                        }
+                        format!(
+                            "<Path id=\"{import_id}{}\" d=\"{}\" viewBox=\"{} {}\" style=\"{pos};{}{}\"/>",
+                            if single { String::new() } else { format!("/{}", i + 1) },
+                            xml(&p.data),
+                            p.size[0],
+                            p.size[1],
+                            xml(&style),
+                            if single { markers(props) } else { String::new() }
+                        )
+                    })
+                    .collect()
             } else {
                 self.loss(page, name, "custom path needs unsupported guide evaluation");
                 String::new()
@@ -1296,6 +1331,12 @@ fn style_css(p: &Value, span: bool) -> String {
     if let Some(dash) = p["dash"].as_str() {
         css.push(format!("border-style:{dash}"));
     }
+    if let Some(cap) = p["lineCap"].as_str().filter(|c| *c != "butt") {
+        css.push(format!("stroke-linecap:{cap}"));
+    }
+    if let Some(join) = p["lineJoin"].as_str().filter(|j| *j != "miter") {
+        css.push(format!("stroke-linejoin:{join}"));
+    }
     let underline = p["underline"].as_bool();
     let strike = p["strike"].as_bool();
     if underline.is_some() || strike.is_some() {
@@ -1357,55 +1398,68 @@ fn payload(
     }
     Ok(String::new())
 }
-fn custom_path(n: X<'_, '_>) -> Option<(String, [f32; 2])> {
-    let paths = n
-        .descendants()
-        .filter(|x| x.has_tag_name((A, "path")))
-        .collect::<Vec<_>>();
-    if paths.len() != 1 {
-        return None;
-    }
-    let p = paths[0];
-    let w = p.attribute("w")?.parse::<f32>().ok()?;
-    let h = p.attribute("h")?.parse::<f32>().ok()?;
-    let mut data = String::new();
-    for c in p.children().filter(|n| n.is_element()) {
-        let points = c
-            .children()
-            .filter(|x| x.has_tag_name((A, "pt")))
-            .map(|p| {
-                Some((
-                    p.attribute("x")?.parse::<f32>().ok()?,
-                    p.attribute("y")?.parse::<f32>().ok()?,
-                ))
-            })
-            .collect::<Option<Vec<_>>>()?;
-        match c.tag_name().name() {
-            "moveTo" | "lnTo" => {
-                let (x, y) = *points.first()?;
-                data.push_str(&format!(
-                    "{} {x} {y} ",
-                    if c.tag_name().name() == "moveTo" {
-                        "M"
-                    } else {
-                        "L"
-                    }
-                ));
-            }
-            "cubicBezTo" => {
-                if points.len() != 3 {
-                    return None;
+/// One custom-geometry sub-path as SVG path data in its own coordinate box.
+struct CustomPath {
+    data: String,
+    size: [f32; 2],
+    fill: bool,
+    stroke: bool,
+}
+/// Every sub-path of a custGeom, or `None` when one needs guide evaluation.
+fn custom_paths(n: X<'_, '_>) -> Option<Vec<CustomPath>> {
+    let mut out = Vec::new();
+    for p in n.descendants().filter(|x| x.has_tag_name((A, "path"))) {
+        let w = p.attribute("w")?.parse::<f32>().ok()?;
+        let h = p.attribute("h")?.parse::<f32>().ok()?;
+        let mut data = String::new();
+        let mut pen = (0.0f64, 0.0f64);
+        for c in p.children().filter(|n| n.is_element()) {
+            let points = c
+                .children()
+                .filter(|x| x.has_tag_name((A, "pt")))
+                .map(|p| {
+                    Some((
+                        p.attribute("x")?.parse::<f64>().ok()?,
+                        p.attribute("y")?.parse::<f64>().ok()?,
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let (tag, need) = match c.tag_name().name() {
+                "moveTo" => ("M", 1),
+                "lnTo" => ("L", 1),
+                "quadBezTo" => ("Q", 2),
+                "cubicBezTo" => ("C", 3),
+                "close" => ("Z", 0),
+                "arcTo" => {
+                    let num = |k: &str| c.attribute(k)?.parse::<f64>().ok();
+                    let (rx, ry, st, sw) = (num("wR")?, num("hR")?, num("stAng")?, num("swAng")?);
+                    pen = crate::preset::arc(pen, rx, ry, st, sw, &mut |cmd| {
+                        if let crate::render::Command::C(a, b, c, d, e, f) = cmd {
+                            data.push_str(&format!("C {a} {b} {c} {d} {e} {f} "));
+                        }
+                    });
+                    continue;
                 }
-                data.push_str("C ");
-                for (x, y) in points {
-                    data.push_str(&format!("{x} {y} "));
-                }
+                _ => return None,
+            };
+            if points.len() != need {
+                return None;
             }
-            "close" => data.push_str("Z "),
-            _ => return None,
+            data.push_str(tag);
+            for (x, y) in &points {
+                data.push_str(&format!(" {x} {y}"));
+            }
+            data.push(' ');
+            pen = points.last().copied().unwrap_or(pen);
         }
+        out.push(CustomPath {
+            data,
+            size: [w.max(1.0), h.max(1.0)],
+            fill: p.attribute("fill") != Some("none"),
+            stroke: !matches!(p.attribute("stroke"), Some("0" | "false")),
+        });
     }
-    Some((data, [w, h]))
+    (!out.is_empty()).then_some(out)
 }
 fn chart_source(
     bytes: &[u8],

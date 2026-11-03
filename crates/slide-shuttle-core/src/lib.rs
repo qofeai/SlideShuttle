@@ -2,6 +2,7 @@
 pub mod baseline;
 pub mod compiler;
 mod font_fallback;
+pub mod icon;
 pub mod import;
 pub mod layout;
 pub mod model;

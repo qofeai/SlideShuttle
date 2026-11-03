@@ -60,7 +60,7 @@ pub fn load(input: &Path, fonts: &[std::path::PathBuf]) -> Result<(Deck, Resourc
         ));
     }
     fn visit(node: &Node, root: &Path, deck: &Deck, resources: &mut Resources) -> Result<()> {
-        if let Kind::Image { src } = &node.kind {
+        if let Kind::Image { src, .. } | Kind::Icon { src } = &node.kind {
             let path = deck.assets.get(src).map(String::as_str).unwrap_or(src);
             if !resources.images.contains_key(src) {
                 resources

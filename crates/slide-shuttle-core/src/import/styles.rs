@@ -249,6 +249,19 @@ impl<'d, 'i> Styles<'d, 'i> {
             }
             props.insert("stroke".into(), color_hex(color).into());
         }
+        if let Some(cap) = line.attribute("cap") {
+            let cap = match cap {
+                "rnd" => "round",
+                "sq" => "square",
+                _ => "butt",
+            };
+            props.insert("lineCap".into(), cap.into());
+        }
+        for (tag, join) in [("round", "round"), ("bevel", "bevel"), ("miter", "miter")] {
+            if child(line, A, tag).is_some() {
+                props.insert("lineJoin".into(), join.into());
+            }
+        }
         if let Some(dash) = child(line, A, "prstDash").and_then(|d| d.attribute("val")) {
             let style = match dash {
                 "solid" => "solid",
