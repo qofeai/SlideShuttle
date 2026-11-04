@@ -161,11 +161,11 @@ python3 -m unittest discover -s benchmarks -p 'test_*.py'
 
 ## 创作 Skill
 
-[slideshuttle Skill](skills/slideshuttle/SKILL.md) 把网页编排思路落实为内容组织、静态 XML、原生渲染、看图改稿和交付流程。包内有设计/语法/复核指南、五页构图示例和自动构建脚本；源码目录可复制给支持 SKILL.md 的 Agent 使用。
+[slideshuttle Skill](skills/slideshuttle/SKILL.md) 按“论证 → 画布 → 系统”的顺序组织创作：先写简报和故事线，通过标题测试，再用画布骨架和共享设计系统写静态 XML，最后原生渲染、看图改稿并交付。包内有设计、语法、复核三份按使用时机划分的指南，一个六页示例工程（含 `brief.md`），以及自动构建脚本；源码目录可复制给支持 SKILL.md 的 Agent 使用。
 
 ```bash
 python3 skills/slideshuttle/scripts/build.py --doctor
 python3 skills/slideshuttle/scripts/build.py /path/to/deck.xml --out /path/to/output/v1
 ```
 
-构建会检查并生成 QPPT、PPTX、PDF、逐页 PNG 与本地静态总览，自动提供项目自带的中文常规/粗体；可用 --repo / --cli / --font 指定其他运行环境。视觉复核仍由创作 Agent 查看实际渲染完成。已有 PPTX 的损失/基线保护继续由 CLI 执行。
+构建会检查并生成 QPPT、PPTX、PDF、逐页 PNG、全稿总览图（未安装 Pillow 时用原生引擎拼版）、标题大纲 `outline.md` 与本地静态总览，自动提供项目自带的中文常规/粗体；可用 --repo / --cli / --font 指定其他运行环境。视觉复核仍由创作 Agent 查看实际渲染完成。已有 PPTX 的损失/基线保护继续由 CLI 执行。

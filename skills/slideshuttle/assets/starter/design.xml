@@ -1,19 +1,45 @@
 <Library>
-  <Token name="ink" value="#142B36"/>
-  <Token name="accent" value="#087E6D"/>
-  <Token name="paper" value="#F4F1E9"/>
-  <Style name="frame">width:100%;height:100%;padding:48px 56px;display:flex;flex-direction:column;gap:20px</Style>
-  <Style name="kicker">height:28px;font-size:16px;line-height:26px;color:var(--accent)</Style>
-  <Style name="heading">height:70px;font-size:44px;line-height:60px;font-weight:700;color:var(--ink)</Style>
-  <Style name="body">font-size:24px;line-height:38px;color:#536B78</Style>
-  <Style name="chart">font-size:16px;color:#536B78;chart-colors:var(--accent) #9B6B32 #6C8290 #C9A227</Style>
-  <Component name="Argument">
-    <Box id="row" style="display:flex;gap:24px;height:112px;flex-shrink:0">
-      <Text id="number" style="width:40px;height:36px;font-size:20px;line-height:32px;white-space:nowrap;color:var(--accent)">${number}</Text>
-      <Box id="content" style="display:flex;flex-direction:column;gap:6px;flex-grow:1;flex-basis:0;min-width:0">
-        <Text id="title" style="height:40px;font-size:26px;line-height:36px;font-weight:700;color:var(--ink)">${title}</Text>
-        <Text id="copy" style="height:62px;font-size:20px;line-height:30px;color:#536B78">${copy}</Text>
-      </Box>
+  <!-- 颜色按职责命名：一个强调色，只标注需要行动的信息 -->
+  <Token name="paper" value="#F7F5F0"/>
+  <Token name="ink" value="#1B1F24"/>
+  <Token name="muted" value="#5E6670"/>
+  <Token name="rule" value="#D9D4CA"/>
+  <Token name="accent" value="#D9542B"/>
+  <Token name="contrast" value="#B5AEA4"/>
+  <Token name="night" value="#1B1F24"/>
+  <Token name="night-muted" value="#9AA1A9"/>
+
+  <!-- 画布：安全边距固定，主体用 flex-grow 吃掉剩余高度，内容不再堆在上半页 -->
+  <Style name="page">width:1280px;height:720px;padding:56px 64px 72px 64px;display:flex;flex-direction:column;gap:40px</Style>
+  <Style name="body">flex-grow:1;flex-basis:0;min-height:0</Style>
+
+  <!-- 字号阶梯：少而对比强 -->
+  <Style name="display">font-size:88px;line-height:108px;font-weight:700</Style>
+  <Style name="title">font-size:40px;line-height:54px;font-weight:700;color:var(--ink)</Style>
+  <Style name="lead">font-size:26px;line-height:40px;color:var(--ink)</Style>
+  <Style name="text">font-size:22px;line-height:34px;color:var(--muted)</Style>
+  <Style name="caption">font-size:16px;line-height:24px;color:var(--muted)</Style>
+  <Style name="figure">font-size:120px;line-height:128px;font-weight:700;color:var(--ink)</Style>
+  <Style name="chart">font-size:16px;color:var(--muted);chart-colors:var(--accent) var(--contrast)</Style>
+
+
+  <!-- 关键数字：数字是主角，说明紧贴其下 -->
+  <Component name="KeyFigure">
+    <Box id="cell" style="display:flex;flex-direction:column;gap:12px">
+      <Shape id="rule" style="width:100%;height:2px;margin-bottom:12px;background:var(--ink)"/>
+      <Text id="value" class="figure" style="color:${color}">${value}</Text>
+      <Text id="label" class="text" style="color:var(--ink)">${label}</Text>
+    </Box>
+  </Component>
+
+  <!-- 时间轴阶段 -->
+  <Component name="Stage">
+    <Box id="stage" style="display:flex;flex-direction:column;gap:14px">
+      <Shape id="dot" shape="ellipse" style="width:20px;height:20px;background:${color}"/>
+      <Text id="when" style="margin-top:12px;font-size:22px;line-height:30px;font-weight:700;color:${color}">${when}</Text>
+      <Text id="what" style="font-size:30px;line-height:42px;font-weight:700;color:var(--ink)">${what}</Text>
+      <Text id="detail" class="text">${detail}</Text>
+      <Text id="owner" class="caption">${owner}</Text>
     </Box>
   </Component>
 </Library>

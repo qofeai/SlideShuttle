@@ -1,4 +1,4 @@
 interface:
   display_name: "SlideShuttle 演示设计"
-  short_description: "用网页编排思维生成重点清晰、可渲染并保留原生对象的精致演示文稿"
-  default_prompt: "使用 $slideshuttle，把我的材料整理成重点明确、视觉精致的演示稿，生成源文件、PPTX 和预览并检查所有页面。"
+  short_description: "先定故事线和标题论断，再用画布构图生成重点清晰、保留原生对象的演示文稿"
+  default_prompt: "使用 $slideshuttle，先写简报和故事线，确认只读标题就能复述论证，再把我的材料做成重点明确、构图讲究的演示稿；生成源文件、QPPT、PPTX 和预览，并逐页检查。"

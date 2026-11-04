@@ -1,0 +1,17 @@
+<Slide id="plan" type="content" background="#F7F5F0">
+  <Box id="frame" class="page">
+    <Text id="title" class="title">Q4 分三步，把首月激活带到全部门店</Text>
+    <Box id="timeline" class="body" style="display:flex;flex-direction:column;justify-content:center">
+      <Box id="track" style="position:relative;display:grid;grid-template-columns:1fr 1fr 1fr;gap:48px">
+        <Shape id="line" style="position:absolute;left:0;top:9px;width:1152px;height:2px;background:var(--rule)"/>
+        <Use id="pilot" component="Stage" color="var(--accent)" when="10 月" what="上线“首月第二杯”" detail="新会员 30 天内第二杯半价" owner="负责：门店运营"/>
+        <Use id="rollout" component="Stage" color="var(--ink)" when="11 月" what="复制到其余 6 家店" detail="沿用试点物料，店长培训 2 天" owner="负责：区域经理"/>
+        <Use id="verify" component="Stage" color="var(--ink)" when="12 月" what="按首月二次到店率验收" detail="目标从 38%提升到 55%" owner="负责：数据组"/>
+      </Box>
+    </Box>
+  </Box>
+  <Notes>
+    只有第一步用强调色：它是本月就要开始的动作。
+    验收指标选首月二次到店率，因为它直接对应第 4 页的问题。
+  </Notes>
+</Slide>

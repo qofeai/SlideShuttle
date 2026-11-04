@@ -11,6 +11,8 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
+from visual_audit import Deck, audit_visual
+
 # Presentation aesthetic & density thresholds (1280x720 baseline)
 MIN_FONT_PX = 16.0
 MIN_BODY_FONT_PX = 20.0
@@ -46,6 +48,21 @@ def repository(explicit):
     return None
 
 
+def default_fonts(repo, cli):
+    dirs = []
+    if os.environ.get('SLIDESHUTTLE_FONT_DIR'):
+        dirs.append(Path(os.environ['SLIDESHUTTLE_FONT_DIR']).expanduser())
+    if repo:
+        dirs.append(repo / 'examples/fonts')
+    if cli:
+        dirs.extend([cli.parent / 'fonts', cli.parent.parent / 'share/fonts', cli.parent.parent / 'fonts'])
+    for d in dirs:
+        pair = [d / f'NotoSansCJK-{w}.ttc' for w in ('Regular', 'Bold')]
+        if all(p.is_file() for p in pair):
+            return [p.resolve() for p in pair]
+    return []
+
+
 def runtime(args):
     repo = repository(args.repo)
     selected = args.cli or os.environ.get('SLIDESHUTTLE_BIN')
@@ -69,11 +86,11 @@ def runtime(args):
         )
     fonts = [Path(f).expanduser().resolve() for f in args.font]
     needs_fonts = args.doctor or args.source is None or args.source.suffix.lower() != '.qppt'
-    if not fonts and repo and needs_fonts:
-        fonts = [repo / f'examples/fonts/NotoSansCJK-{weight}.ttc' for weight in ['Regular', 'Bold']]
+    if not fonts and needs_fonts:
+        fonts = default_fonts(repo, cli)
     if (needs_fonts and not fonts) or any(not p.is_file() for p in fonts):
         raise ValueError(
-            'Provide regular/bold font files with --font, or configure --repo with its bundled Noto CJK fonts.'
+            'Provide regular/bold font files with --font, set SLIDESHUTTLE_FONT_DIR, or configure --repo with its bundled Noto CJK fonts.'
         )
     version = subprocess.run(
         [str(cli), '--version'], capture_output=True, text=True, timeout=15, check=True
@@ -330,6 +347,34 @@ def audit_design(source, check):
     }
 
 
+def outline(source):
+    """Collect each slide's title text and notes so the storyline can be read on its own."""
+    entry = source if source.is_file() else (source / 'deck.xml')
+    if not entry.is_file() or entry.suffix.lower() != '.xml':
+        return None
+    try:
+        slides = Deck(entry).slides
+    except (ET.ParseError, OSError):
+        return None
+    items = []
+    for slide in slides:
+        title = next((e for e in slide.iter('Text') if e.attrib.get('id') == 'title'), None)
+        text = ''.join(title.itertext()).strip() if title is not None else None
+        notes = slide.find('Notes')
+        note_lines = [l.strip() for l in (notes.text or '').splitlines() if l.strip()] if notes is not None else []
+        items.append({'id': slide.attrib.get('id'), 'type': slide.attrib.get('type'), 'title': text, 'notes': len(note_lines)})
+    return items
+
+
+def write_outline(out, items):
+    lines = ['# 标题大纲', '', '只读这些标题，应能复述完整论证；读不通就先改故事线，再改版式。', '']
+    for i, item in enumerate(items, 1):
+        title = item['title'] or '（没有 id="title" 的标题）'
+        lines.append(f"{i:02}. {title}  ·  `{item['id']}`{' · ' + item['type'] if item['type'] else ''}{'' if item['notes'] else ' · 无讲稿'}")
+    (out / 'outline.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return str(out / 'outline.md')
+
+
 def gallery(out, pages, title):
     images = ''.join(
         f'<figure><a href="preview/{p.name}"><img src="preview/{p.name}" alt="Page {i}" loading="lazy"></a><figcaption>{i:02} / {len(pages):02}</figcaption></figure>'
@@ -341,11 +386,11 @@ def gallery(out, pages, title):
     )
 
 
-def contact_sheet(out, pages):
+def contact_sheet(out, pages, info):
     try:
         from PIL import Image, ImageDraw, ImageOps
     except ImportError:
-        return None
+        return native_contact_sheet(out, pages, info)
     columns = min(3, len(pages))
     rows = math.ceil(len(pages) / columns)
     if columns * 400 * rows * 250 > 64_000_000:
@@ -360,6 +405,52 @@ def contact_sheet(out, pages):
         ImageDraw.Draw(sheet).text(((i % columns) * 400 + 8, y + 226), f'{i + 1:02} / {len(pages):02}', fill='#142B36')
     sheet.save(out / 'contact-sheet.png')
     return str(out / 'contact-sheet.png')
+
+
+def native_contact_sheet(out, pages, info):
+    """Without Pillow, lay the page PNGs out as one SlideShuttle slide and render it natively."""
+    if not info['fonts']:
+        return None
+    columns = min(3, len(pages))
+    rows = math.ceil(len(pages) / columns)
+    width, height = columns * 400, rows * 250
+    if height > 16384:
+        return None
+    cells = []
+    for i, page in enumerate(pages):
+        x, y = (i % columns) * 400, (i // columns) * 250
+        cells.append(
+            f'<Image id="p{i + 1}" src="preview/{page.name}" style="position:absolute;left:{x + 4}px;top:{y}px;width:392px;height:220px;object-fit:contain"/>'
+            f'<Text id="n{i + 1}" style="position:absolute;left:{x + 8}px;top:{y + 224}px;font-size:16px;line-height:22px;color:#142B36">{i + 1:02} / {len(pages):02}</Text>'
+        )
+    # A throwaway multi-file project: resources must sit inside the entry directory.
+    work = out / '.contact-sheet'
+    shutil.rmtree(work, ignore_errors=True)
+    (work / 'pages').mkdir(parents=True)
+    (work / 'preview').mkdir()
+    for page in pages:
+        shutil.copyfile(page, work / 'preview' / page.name)
+    (work / 'pages/sheet.xml').write_text(
+        f'<Slide id="sheet" background="#E7EDF1">{"".join(cells)}</Slide>', encoding='utf-8'
+    )
+    (work / 'deck.xml').write_text(
+        f'<Deck width="{width}px" height="{height}px" font-family="Noto Sans CJK SC"><Slide src="pages/sheet.xml"/></Deck>',
+        encoding='utf-8',
+    )
+    fonts = [p for font in info['fonts'] for p in ['--font', font]]
+    result = None
+    try:
+        process = subprocess.run(
+            [info['cli'], 'render', str(work / 'deck.xml'), '--out', str(work / 'render'), *fonts],
+            capture_output=True, text=True, timeout=180,
+        )
+        rendered = work / 'render/slide-001.png'
+        if process.returncode == 0 and rendered.is_file():
+            rendered.replace(out / 'contact-sheet.png')
+            result = str(out / 'contact-sheet.png')
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return result
 
 
 def main():
@@ -395,6 +486,13 @@ def main():
         if not check or not check.get('valid'):
             raise ValueError('check did not return a valid document')
         design_audit = audit_design(source, check)
+        entry_xml = source if source.is_file() else (source / 'deck.xml')
+        if entry_xml.is_file() and entry_xml.suffix.lower() == '.xml':
+            extra, hints = audit_visual(entry_xml, check)
+            design_audit['warnings'] += extra
+            design_audit['warningCount'] = len(design_audit['warnings'])
+            design_audit['passed'] = not design_audit['warnings']
+            design_audit['hints'] = hints
         if args.strict_design and not design_audit['passed']:
             raise ValueError(f'designAudit failed with {design_audit["warningCount"]} warning(s):\n' + json.dumps(design_audit, ensure_ascii=False, indent=2))
         run_step(info, out, 'pack', ['pack', source, '--out', out / 'presentation.qppt', *fonts])
@@ -410,7 +508,9 @@ def main():
             if f.read(2) != b'PK':
                 raise ValueError('invalid PPTX output')
         gallery(out, pages, source.stem)
-        sheet = contact_sheet(out, pages)
+        sheet = contact_sheet(out, pages, info)
+        story = outline(source)
+        outline_file = write_outline(out, story) if story else None
         summary.update(
             status='built',
             pages=len(pages),
@@ -420,6 +520,7 @@ def main():
             previews=[str(p) for p in pages],
             gallery=str(out / 'index.html'),
             contactSheet=sheet,
+            outline=outline_file,
             diagnostics=check['diagnostics'],
             designAudit=design_audit,
         )

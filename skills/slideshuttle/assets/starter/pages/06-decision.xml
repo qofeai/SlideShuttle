@@ -1,0 +1,28 @@
+<Slide id="decision" type="end" background="#1B1F24">
+  <Box id="frame" class="page">
+    <Box id="grid" class="body" style="display:grid;grid-template-columns:5fr 7fr;gap:64px;align-items:end">
+      <Text id="title" style="font-size:64px;line-height:84px;font-weight:700;color:var(--paper)">今天需要<br/>确认两件事</Text>
+      <Box id="asks" style="display:flex;flex-direction:column;justify-content:flex-end;gap:36px">
+        <Box id="ask-scope" style="display:flex;gap:28px">
+          <Text id="scope-no" style="font-size:48px;line-height:56px;font-weight:700;color:var(--accent)">1</Text>
+          <Box id="scope-copy" style="display:flex;flex-direction:column;gap:10px;flex-grow:1;flex-basis:0;min-width:0">
+            <Text id="scope-what" style="font-size:30px;line-height:42px;font-weight:700;color:var(--paper)">批准 Q4 扩到全部 12 家店</Text>
+            <Text id="scope-cost" class="text" style="color:var(--night-muted)">不新增系统成本；店长培训 2 天</Text>
+          </Box>
+        </Box>
+        <Shape id="divider" style="width:100%;height:1px;background:#3A4048"/>
+        <Box id="ask-budget" style="display:flex;gap:28px">
+          <Text id="budget-no" style="font-size:48px;line-height:56px;font-weight:700;color:var(--accent)">2</Text>
+          <Box id="budget-copy" style="display:flex;flex-direction:column;gap:10px;flex-grow:1;flex-basis:0;min-width:0">
+            <Text id="budget-what" style="font-size:30px;line-height:42px;font-weight:700;color:var(--paper)">首月激活预算 ¥10.8 万</Text>
+            <Text id="budget-cost" class="text" style="color:var(--night-muted)">每店每月约 ¥3,000，12 家 × 3 个月</Text>
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  </Box>
+  <Notes>
+    收尾只留需要拍板的两件事，各自带上代价。
+    如果预算需要缩减，优先保留前 6 家新店的首月激活。
+  </Notes>
+</Slide>
