@@ -7,6 +7,22 @@ const root = path.resolve(__dirname, '..');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || './browser/node_modules/playwright');
 const output = path.join(root, 'examples/output/browser-v2');
 fs.mkdirSync(output, { recursive: true });
+const cli = path.join(root, 'target/debug/slide-shuttle');
+const packageFonts = ['--font', path.join(root, 'examples/fonts/NotoSansCJK-Regular.ttc'), '--font', path.join(root, 'examples/fonts/NotoSansCJK-Bold.ttc')];
+for (const name of ['components', 'show']) {
+  const destination = path.join(output, `${name}.qppt`);
+  fs.rmSync(destination, { force: true });
+  execFileSync(cli, ['pack', path.join(root, `examples/${name}.xml`), '--out', destination, ...packageFonts]);
+}
+const portableRoot = path.join(output, 'portable-project');
+fs.mkdirSync(path.join(portableRoot, 'pages'), { recursive: true });
+fs.mkdirSync(path.join(portableRoot, 'media'), { recursive: true });
+fs.writeFileSync(path.join(portableRoot, 'deck.xml'), '<Deck width="80px" height="40px" font-family="DejaVu Sans"><Slide src="pages/main.xml"/></Deck>');
+fs.writeFileSync(path.join(portableRoot, 'pages/main.xml'), '<Slide id="portable"><Image id="image" src="media/palette.png" style="width:80px;height:40px"/></Slide>');
+fs.copyFileSync(path.join(root, 'examples/palette.png'), path.join(portableRoot, 'media/palette.png'));
+const portablePackage = path.join(output, 'portable.qppt');
+fs.rmSync(portablePackage, { force: true });
+execFileSync(cli, ['pack', portableRoot, '--out', portablePackage, '--font', path.join(root, 'crates/slide-shuttle-core/tests/fonts/DejaVuSans.ttf')]);
 const emptyTextFixture = path.join(output, 'empty-text-regression.pptx');
 execFileSync('python3', [path.join(root, 'tools/create_empty_text_fixture.py'), '--base', path.join(root, 'examples/output/SlideShuttle-demo.pptx'), '--out', emptyTextFixture]);
 const themeFixture = path.join(output, 'theme-regression.pptx');
@@ -76,6 +92,15 @@ async function main() {
     const pdf = await download('pdf'), pptx = await download('pptx');
     assert.equal(pdf.subarray(0, 5).toString(), '%PDF-'); assert.equal(pptx.subarray(0, 2).toString(), 'PK');
 
+    const fixturePage = await page.locator('#file option').evaluateAll(options => options.map(o => o.value).find(name => name.startsWith('pages/')));
+    const entryName = await page.locator('#file').inputValue();
+    async function editFixture(xml) {
+      const slide = xml.match(/<Slide[\s\S]*<\/Slide>/)[0];
+      await page.locator('#file').selectOption(entryName);
+      await page.locator('#xml').fill(xml.replace(slide, `<Slide src="${fixturePage}"/>`));
+      await page.locator('#file').selectOption(fixturePage);
+      await page.locator('#xml').fill(slide);
+    }
     await page.locator('#source-panel').evaluate(element => element.open = true);
     const original = await page.locator('#xml').inputValue();
     await page.locator('#xml').fill(original.replace('让想法', '把想法'));
@@ -88,14 +113,14 @@ async function main() {
     assert.equal((await latestStats()).fontBuilds, 1, 'recovering from source errors should reuse loaded fonts');
 
     // A valid but tight box must retain its warning after the page is painted.
-    await page.locator('#xml').fill('<Deck font-family="Noto Sans CJK SC"><Slide id="tight"><Text id="label" style="width:49px;height:34px;font-size:24px;line-height:34px">中文</Text></Slide></Deck>');
+    await editFixture('<Deck font-family="Noto Sans CJK SC"><Slide id="tight"><Text id="label" style="width:49px;height:34px;font-size:24px;line-height:34px">中文</Text></Slide></Deck>');
     await page.click('#recompile'); await ready();
     assert((await page.locator('#diagnostics').textContent()).includes('text_tight'), 'page rendering should preserve compiler warnings');
 
     const missingFontSource = '<Deck font-family="Missing Preview Font"><Slide id="fallback"><Text id="fallback-title" style="width:900px;height:90px;font-size:32px;font-style:italic">中文字体替代 / preview fallback</Text></Slide></Deck>';
-    await page.locator('#xml').fill(missingFontSource); await page.click('#recompile'); await ready();
+    await editFixture(missingFontSource); await page.click('#recompile'); await ready();
     assert(await page.locator('#font-notice').isVisible(), 'font substitutions must be visible outside collapsed diagnostics');
-    assert.equal(await page.locator('#xml').inputValue(), missingFontSource, 'preview substitution must not rewrite the source editor');
+    assert.equal(await page.locator('#xml').inputValue(), missingFontSource.match(/<Slide[\s\S]*<\/Slide>/)[0], 'preview substitution must not rewrite the source editor');
     assert((await page.locator('#diagnostics').textContent()).includes('font_substitution'));
     await page.locator('#resources-panel').evaluate(element => element.open = true);
     await page.locator('#font-fallback').uncheck();
@@ -105,7 +130,7 @@ async function main() {
     assert(await page.locator('#slide').isHidden());
 
     await page.locator('#fonts').setInputFiles([path.join(root, 'crates/slide-shuttle-core/tests/fonts/DejaVuSans.ttf'), path.join(root, 'crates/slide-shuttle-core/tests/fonts/DejaVuSans-Bold.ttf')]);
-    await page.locator('#xml').fill('<Deck font-family="DejaVu Sans"><Slide id="custom"><Text id="custom-title" style="width:900px;height:90px;font-size:32px;font-weight:700">Custom font resource</Text></Slide></Deck>');
+    await editFixture('<Deck font-family="DejaVu Sans"><Slide id="custom"><Text id="custom-title" style="width:900px;height:90px;font-size:32px;font-weight:700">Custom font resource</Text></Slide></Deck>');
     await page.click('#run'); await ready();
     assert(await page.locator('#font-notice').isHidden(), 'provided custom faces should render without substitution');
     await page.locator('#fonts').setInputFiles([]);
@@ -146,8 +171,7 @@ async function main() {
       if (index < 2) { await page.click('#next'); await ready(); }
     }
 
-    await page.locator('#source').setInputFiles(path.join(root, 'examples/components.xml'));
-    await page.locator('#images').setInputFiles(path.join(root, 'examples/palette.png'));
+    await page.locator('#source').setInputFiles(path.join(output, 'components.qppt'));
     await page.click('#run'); await ready();
     await page.click('#next'); await ready();
     const imagePage = await download('png');
@@ -167,7 +191,7 @@ async function main() {
     assert.equal(await page.locator('#page-label').textContent(), '1 / 3', 'editing one page file recompiles the whole project');
     await page.locator('#source-panel').evaluate(element => element.open = false);
 
-    await page.locator('#source').setInputFiles(path.join(root, 'examples/show.xml'));
+    await page.locator('#source').setInputFiles(path.join(output, 'show.qppt'));
     await page.click('#run'); await ready();
     await page.evaluate(() => { window.__frames = []; window.addEventListener('slideshuttle:frame', e => window.__frames.push(e.detail)); });
     const frameReady = () => page.waitForFunction(() => document.body.dataset.busy === 'false' && window.__frames.length > 0);
@@ -204,8 +228,25 @@ async function main() {
     await page.click('#show-exit');
     await page.setViewportSize({ width: 1440, height: 1050 });
 
+    const isolated = await browser.newContext();
+    const portable = await isolated.newPage();
+    const portableFonts = [];
+    portable.on('request', request => { if (new URL(request.url()).pathname.endsWith('.ttc')) portableFonts.push(request.url()); });
+    await portable.goto(`${origin}/wasm-preview.html`);
+    await portable.waitForFunction(() => !document.getElementById('run').disabled);
+    await portable.locator('#source').setInputFiles(portablePackage);
+    await portable.click('#run');
+    await portable.waitForFunction(() => document.body.dataset.state === 'ready' && document.body.dataset.busy === 'false');
+    assert.deepEqual(portableFonts, [], 'a self-contained QPPT must not fetch the 38 MiB built-in fonts');
+    assert.equal(await portable.locator('#page-label').textContent(), '1 / 1');
+    assert(await portable.locator('#font-notice').isHidden());
+    await portable.click('#present');
+    await portable.waitForFunction(() => document.body.dataset.presenting === 'true' && document.body.dataset.busy === 'false');
+    assert(await portable.locator('#frame').isVisible());
+    await isolated.close();
+
     assert.equal(fontRequests.length, 2, 'opening another document or replacing the Worker must reuse the built-in font bytes');
-    const report = { engineVersion: execFileSync(path.join(root, 'target/debug/slide-shuttle'), ['--version'], { encoding: 'utf8' }).trim(), browser: browser.version(), worker: true, nativeClickShow: true, nativeRgbaPixels: true, nativeStepPngByteMatch: true, showKeyboardAndTouch: true, builtinFontsAutomatic: true, builtinFontDownloads: fontRequests.length, sourceFileOnlyPreview: true, fontSubstitutionsVisible: true, strictFontMode: true, customFontsSupported: true, nativePngByteMatch: true, imageAssetNativeByteMatch: true, pageCacheHits: 1, pageNavigationCompileCount: 1, fontBuildsAfterSourceEditAndRecovery: 1, invalidSourceClearsPreview: true, warningsRemainVisible: true, importedPptxPreview: true, emptyTextPptxPreview: true, themeStylePptxPreview: true, themeOracleByteMatchPages: 3, themeImportLosses: 0, importLossesVisible: true, importedPptxReexportGuarded: true, cancelAndReload: true, firstLoadMs, responsiveTicks, pdfBytes: pdf.length, pptxBytes: pptx.length, pageErrors: errors, externalRequests };
+    const report = { engineVersion: execFileSync(path.join(root, 'target/debug/slide-shuttle'), ['--version'], { encoding: 'utf8' }).trim(), browser: browser.version(), worker: true, nativeClickShow: true, nativeRgbaPixels: true, nativeStepPngByteMatch: true, showKeyboardAndTouch: true, builtinFontsAutomatic: true, builtinFontDownloads: fontRequests.length, qpptSingleFilePreview: true, qpptEmbeddedImages: true, qpptColdLoadWithoutBuiltinFonts: true, fontSubstitutionsVisible: true, strictFontMode: true, customFontsSupported: true, nativePngByteMatch: true, imageAssetNativeByteMatch: true, pageCacheHits: 1, pageNavigationCompileCount: 1, fontBuildsAfterSourceEditAndRecovery: 1, invalidSourceClearsPreview: true, warningsRemainVisible: true, importedPptxPreview: true, emptyTextPptxPreview: true, themeStylePptxPreview: true, themeOracleByteMatchPages: 3, themeImportLosses: 0, importLossesVisible: true, importedPptxReexportGuarded: true, cancelAndReload: true, firstLoadMs, responsiveTicks, pdfBytes: pdf.length, pptxBytes: pptx.length, pageErrors: errors, externalRequests };
     assert.deepEqual(errors, []); assert.deepEqual(externalRequests, []);
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));

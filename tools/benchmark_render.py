@@ -35,8 +35,13 @@ def main():
     data = b''.join(b'\0' + rng.randbytes(320 * 3) for _ in range(180))
     png = b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 320, 180, 8, 2, 0, 0, 0)) + png_chunk(b'IDAT', zlib.compress(data)) + png_chunk(b'IEND', b'')
     (args.out / 'noise.png').write_bytes(png)
-    slides = ''.join(f'<Slide id="p{i}"><Image id="image" src="noise.png" style="width:640px;height:360px"/><Animate target="image" effect="appear"/></Slide>' for i in range(args.pages))
-    source = '<Deck width="640px" height="360px" font-family="DejaVu Sans">' + slides + '</Deck>'
+    (args.out / 'pages').mkdir()
+    references = []
+    for i in range(args.pages):
+        page = f'<Slide id="p{i}"><Image id="image" src="noise.png" style="width:640px;height:360px"/><Animate target="image" effect="appear"/></Slide>'
+        (args.out / 'pages' / f'{i}.xml').write_text(page, encoding='utf-8')
+        references.append(f'<Slide src="pages/{i}.xml"/>')
+    source = '<Deck width="640px" height="360px" font-family="DejaVu Sans">' + ''.join(references) + '</Deck>'
     (args.out / 'deck.xml').write_text(source, encoding='utf-8')
     font = Path(__file__).resolve().parents[1] / 'crates/slide-shuttle-core/tests/fonts/DejaVuSans.ttf'
     command = [str(cli), 'render', str(args.out / 'deck.xml'), '--font', str(font), '--out', str(args.out / 'render')]

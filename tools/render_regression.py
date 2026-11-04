@@ -7,6 +7,7 @@ import subprocess
 import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from project_source import write_project
 
 
 def words(text):return {w.casefold()for w in re.findall(r"\w+",unicodedata.normalize("NFKC",text))if len(w)>=4}
@@ -28,9 +29,10 @@ def main():
         (out/f"{name}.json").write_text(json.dumps({"argv":[str(x)for x in args],"returnCode":process.returncode,"stdout":process.stdout,"stderr":process.stderr},ensure_ascii=False,indent=2))
         if process.returncode:raise RuntimeError(process.stderr)
         return process.stdout
-    run([str(binary),"check",str(source),*font_args],"check")
-    run([str(binary),"render",str(source),"--out",str(out/"native"),"--pdf",*font_args],"render")
-    run([str(binary),"export",str(source),"--out",str(out/"SlideShuttle-benchmark-v2.pptx"),*font_args],"export")
+    project_entry=write_project(ET.parse(source).getroot(),out/"source.xml")
+    run([str(binary),"check",str(project_entry),*font_args],"check")
+    run([str(binary),"render",str(project_entry),"--out",str(out/"native"),"--pdf",*font_args],"render")
+    run([str(binary),"export",str(project_entry),"--out",str(out/"SlideShuttle-benchmark-v2.pptx"),*font_args],"export")
     office=out/"libreoffice";office.mkdir()
     in_container=Path("/work")/out.relative_to(root)
     run(["docker","exec",a.container,"libreoffice","-env:UserInstallation=file:///tmp/render-regression-v2","--headless","--convert-to","pdf","--outdir",str(in_container/"libreoffice"),str(in_container/"SlideShuttle-benchmark-v2.pptx")],"libreoffice")

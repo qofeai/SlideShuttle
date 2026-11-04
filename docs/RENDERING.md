@@ -1,11 +1,11 @@
 # SlideShuttle 原生渲染与放映
 
-日期：2026-11-03。源语言为独立的 SlideShuttle Language v1，不兼容 Kimi PPTD。原生 XML 直接用于编译、预览和点击步骤放映；PPTX 是可选交付出口。性能数据与剩余客户端/连续动画缺口见 [架构审查](AUDIT-2026-11-03.md)。
+日期：2026-11-03。源语言为独立的 SlideShuttle Language v1，不兼容 Kimi PPTD。QPPT 或多文件工程直接用于编译、预览和点击步骤放映；PPTX 是可选交付出口。性能数据与剩余客户端/连续动画缺口见 [架构审查](AUDIT-2026-11-03.md)。
 
 ## 编译与渲染的边界
 
 ```text
-XML + 显式字体/图片
+QPPT → 包内 XML 工程 + 字体/图片
   → 严格解析与组件展开
   → Taffy 布局 + COSMIC Text 字体整形
   → CompiledDocument / CompiledDeck：场景、定位字形、资源快照
@@ -58,13 +58,13 @@ wasm-bindgen --target web --out-dir examples/output/wasm \
 python3 -m http.server 8088 --bind 127.0.0.1 --directory examples
 ```
 
-访问 `http://localhost:8088/wasm-preview.html`，直接选择文稿并点“打开并预览”。不选文稿时打开内置三页 XML 示例，无需上传字体。应用在 `examples/fonts` 随附 Noto CJK 的常规和粗体，首次从同源加载约 38 MiB，后续打开复用保留的字体字节。该目录需要随页面发布，来源、摘要和 SIL OFL 1.1 许可也在目录内。
+访问 `http://localhost:8088/wasm-preview.html`，直接选择文稿并点“打开并预览”。QPPT 自带字体，打开时不下载内置 CJK 字体。不选文稿时打开内置三页多文件工程示例，无需上传字体。应用在 `examples/fonts` 随附 Noto CJK 的常规和粗体，首次从同源加载约 38 MiB，后续打开复用保留的字体字节。该目录需要随页面发布，来源、摘要和 SIL OFL 1.1 许可也在目录内。
 
 “字体与图片”中可以补充 `.ttf` / `.otf` / `.ttc` 原字体。预览器默认替代未提供的字体/样式，并在预览旁显示提示；需要严格检查时关闭“缺失字体使用内置字体替代”。不会合成粗体或斜体，找不到斜体时可能显示常规字形并报告。缺字仍然失败，字体替代也可能造成溢出或换行差异。
 
-- 浏览器支持 XML 和有限 PPTX 导入、逐页预览、PNG/PDF 下载；自创 XML 稿可导出 PPTX。
+- 浏览器支持 QPPT、多文件工程和有限 PPTX 导入、逐页预览、PNG/PDF 下载；自创文稿可导出 PPTX。
 - 源码面板可改 XML 并重新编译。资源不变时复用字体系统。
-- `examples/components.xml` 展示自动占位的列表符号、图片、表格和折线图；选该文稿时，在“附加图片资源”中同时选 `examples/palette.png`。该图片为项目自制测试资产。
+- `examples/components.xml` 展示自动占位的列表符号、图片、表格和折线图；先用 `pack examples/components.xml --out components.qppt --font …` 打包，再选择该 QPPT，图片随包携带。该图片为项目自制测试资产。
 - 当前文件选择器使用文件名作为图片键；可通过 Asset 将键映射为源中的别名。含子目录资源的工程需要宿主保留相对键名，或用 CLI 加载。
 - PPTX 导入会展示损失，默认可用内置字体预览；可以补充原字体以减小差异。导入稿可以下载预览 PNG/PDF；PPTX 重建需要用 CLI 检查基线、外部差异和损失。
 
@@ -73,15 +73,12 @@ python3 -m http.server 8088 --bind 127.0.0.1 --directory examples
 ## Rust API
 
 ```rust
-use slide_shuttle_core::{Compiler, FontResource, Resources};
+use slide_shuttle_core::Compiler;
 
-let mut resources = Resources::default();
-resources.fonts.push(FontResource {
-    family: "Noto Sans CJK SC".into(),
-    bytes: std::fs::read("fonts/NotoSansCJK-Regular.ttc")?,
-});
-let mut compiler = Compiler::new(resources)?;
-let document = compiler.compile(&source_xml)?;
+let mut project = slide_shuttle_core::package::Project::read(&qppt_bytes)?;
+let deck = project.deck()?;
+let mut compiler = Compiler::new(project.take_resources(&deck)?)?;
+let document = compiler.compile_deck(deck)?;
 println!("{}", document.inspect());
 // 有 error 的场景可查看诊断；render/export 会拒绝。
 let png = document.render_png(0, 1.0)?;
@@ -89,7 +86,7 @@ let pdf = document.render_pdf()?;
 let pptx = document.export_pptx()?;
 ```
 
-`Compiler` 为同一资源集持有可复用字体系统。`compile()` 成功表示文档已生成，不表示没有布局 error，应检查 `scene().has_errors()` 或 `inspect().valid`。语法、字体等错误直接返回 Err。`CompiledDocument` 的资源快照与编译器独立，编译器释放后仍可使用。
+`Compiler` 为同一资源集持有可复用字体系统。`compile_deck()` 成功表示文档已生成，不表示没有布局 error，应检查 `scene().has_errors()` 或 `inspect().valid`。语法、字体等错误直接返回 Err。`CompiledDocument` 的资源快照与编译器独立，编译器释放后仍可使用。
 
 核心不读取 Font/Asset 路径；调用方必须注入实际字节。CLI 负责读文件。WASM 的 Image 可以直接用注入键，也可以用 Asset 别名映射到注入的路径键；相同名称的直接键优先。
 
@@ -101,13 +98,10 @@ let pptx = document.export_pptx()?;
 import init, { Engine } from './output/wasm/slide_shuttle_wasm.js';
 await init();
 const engine = new Engine();
-engine.addFont('Noto Sans CJK SC', regularBytes);
-engine.addFont('Noto Sans CJK SC', boldBytes);
-engine.addImage('palette.png', paletteBytes);
 
 let deck;
 try {
-  deck = engine.compile(xml);
+  deck = engine.openQppt(qpptBytes);
   const report = JSON.parse(deck.inspect());
   if (!report.valid) throw new Error(JSON.stringify(report.diagnostics));
   console.log(deck.pageCount, deck.width, deck.height);
@@ -122,11 +116,11 @@ try {
 }
 ```
 
-`Engine.check(source)`、`renderPng(source, page, scale)`、`renderPdf(source)` 与 `exportPptx(source)` 仍可使用，复用最近一次完全相同源码的编译文档。多页 UI 更适合显式持有 `CompiledDeck`。
+WASM 统一使用 `openQppt(bytes)` 或 `compileProject(entry, filesJson)`。源码编辑器可用 `importQppt(bytes)` 加载资源、取出多文件文本，再修改并编译。单源码方法已移除。
 
 WASM 的 `engine.setFontFallback('Noto Sans CJK SC')` 开启带诊断的替代，传 `undefined` 关闭；默认关闭。需先提供替代字体的常规字形。更改策略会清除当前源码编译缓存，旧文档不变；`clear()` 恢复严格策略。浏览器示例显式启用这项策略，并在 UI 提示替代，不将它当作无损转换。
 
-`Engine.stats()` 的 `compilations` 统计生成的编译文档，`fontBuilds` 统计字体系统构建，`cacheHits` 统计相同源码命中。`CompiledDeck.stats()` 的 `pngRenders` / `pngCacheHits` 统计 PNG 绘制和缓存命中；`cachedPages` 是“页码 + 缩放”条目数，`cachedBytes` 为缓存的编码字节数。
+`Engine.stats()` 的 `compilations` 统计生成的编译文档，`fontBuilds` 统计字体系统构建，`cacheHits` 统计相同源码命中。`CompiledDeck.stats()` 的 `pngRenders` / `pngCacheHits` 统计 PNG 绘制和缓存命中；`cachedPages` 沿用旧字段名，表示“页码 + 步骤或静态页 + 缩放”的 PNG 条目数，`cachedBytes` 为缓存的编码字节数。
 
 每个文档采用 LRU，最多 8 项、32 MiB 编码 PNG；不同缩放是不同条目。PDF/PPTX 复用场景但每次生成字节，不使用这份 PNG 缓存。资源集上限 256 MiB；字体文件最多 64 MiB，单个显式图片最多 32 MiB，图片解码和渲染表面另有预算。
 

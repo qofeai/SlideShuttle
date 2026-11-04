@@ -2,7 +2,9 @@
 
 独立的 Rust 原生演示文稿引擎。Agent 用接近 HTML/CSS 的静态声明描述页面，用户可通过 WASM 直接查看原生文稿、按点击步骤放映；同一布局与文字整形引擎生成 PNG、PDF，以及包含原生对象的 PPTX。预览和放映无需先转换为 PPTX。
 
-当前版本 **0.3.0**，提供原生渲染库、CLI 和运行于 Web Worker 的 WASM 预览器。格式由本项目定义，不读取 Kimi 的 PPTD；核心渲染不依赖浏览器或 Office 服务。**不承诺任意 PPTX 无损往返，也尚未通过真实 PowerPoint / WPS 验收。**
+正式原生交付格式为 **`.qppt`**：多文件工程、字体和资源的 ZIP 封装，没有版本字段，见 [QPPT 格式](docs/QPPT.md)。即使一页也使用独立页面文件。
+
+当前包版本 **0.3.0**，提供原生渲染库、CLI 和运行于 Web Worker 的 WASM 预览器。格式由本项目定义，不读取 Kimi 的 PPTD；核心渲染不依赖浏览器或 Office 服务。**不承诺任意 PPTX 无损往返，也尚未通过真实 PowerPoint / WPS 验收。**
 
 ## 开始使用
 
@@ -10,21 +12,19 @@
 
 ```bash
 cargo build -p slide-shuttle-cli
+python3 tools/fetch_fonts.py
 
-target/debug/slide-shuttle check examples/demo.xml \
-  --font /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
-  --font /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
+target/debug/slide-shuttle pack examples/project --out examples/output/demo.qppt \
+  --font examples/fonts/NotoSansCJK-Regular.ttc \
+  --font examples/fonts/NotoSansCJK-Bold.ttc
 
-target/debug/slide-shuttle render examples/demo.xml --out examples/output/preview --pdf \
-  --font /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
-  --font /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
-
-target/debug/slide-shuttle export examples/demo.xml --out examples/output/demo.pptx \
-  --font /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
-  --font /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
+target/debug/slide-shuttle check examples/output/demo.qppt
+target/debug/slide-shuttle render examples/output/demo.qppt --out examples/output/preview --pdf
+target/debug/slide-shuttle export examples/output/demo.qppt --out examples/output/demo.pptx
+target/debug/slide-shuttle unpack examples/output/demo.qppt --out examples/output/editable
 ```
 
-路径按本机字体位置调整。字体也可在源文件中声明为 `<Font family="…" src="fonts/regular.ttf"/>`。声明的字体、图片路径必须留在源文件目录内；`--font` 可显式提供其他位置的字体。只有常规字体时，使用粗体会报缺少字重，不做静默伪粗体。PNG/PDF 使用提供的字形，PDF 嵌入子集字体；**PPTX 目前只引用字体名称，收件端需要安装相同字体**。
+QPPT 包内带字体，打开与渲染无需重复传字体。创作时字体路径按本机位置调整。字体也可在源文件中声明为 `<Font family="…" src="fonts/regular.ttf"/>`。声明的字体、图片路径必须留在源文件目录内；`--font` 可显式提供其他位置的字体。只有常规字体时，使用粗体会报缺少字重，不做静默伪粗体。PNG/PDF 使用提供的字形，PDF 嵌入子集字体；**PPTX 目前只引用字体名称，收件端需要安装相同字体**。
 
 输出路径必须不存在。再次生成请选择新文件或目录，避免把尚未检查的外部版本覆盖。
 
@@ -40,21 +40,29 @@ target/debug/slide-shuttle export examples/demo.xml --out examples/output/demo.p
 
 ## 语言示例
 
+入口 `deck.xml`：
+
 ```xml
 <Deck width="1280px" height="720px" font-family="DejaVu Sans">
   <Font family="DejaVu Sans" src="fonts/DejaVuSans.ttf"/>
-  <Slide id="intro" background="#F3F8F6">
-    <Box id="columns" style="display:grid;grid-template-columns:2fr 1fr;gap:32px;padding:56px">
-      <Text id="title" style="height:150px;font-size:48px;line-height:64px">
-        A clear idea.<br/>A native slide.
-      </Text>
-      <Shape id="accent" style="height:150px;background:#09A88F;border-radius:16px"/>
-    </Box>
-  </Slide>
+  <Slide src="pages/intro.xml"/>
 </Deck>
 ```
 
-一份稿可以拆成入口 `deck.xml`、共享库 `<Library src>` 和每页一个文件的 `<Slide src>`，页内元素 ID 只需在本页唯一，`check` / `render --page <id>` 可只处理一页，见 [项目结构](docs/LANGUAGE.md#项目结构)。
+页面 `pages/intro.xml`：
+
+```xml
+<Slide id="intro" background="#F3F8F6">
+  <Box id="columns" style="display:grid;grid-template-columns:2fr 1fr;gap:32px;padding:56px">
+    <Text id="title" style="height:150px;font-size:48px;line-height:64px">
+      A clear idea.<br/>A native slide.
+    </Text>
+    <Shape id="accent" style="height:150px;background:#09A88F;border-radius:16px"/>
+  </Box>
+</Slide>
+```
+
+共享样式和组件可放在 `<Library src="design.xml"/>`。页内元素 ID 只需在本页唯一，`check` / `render --page <id>` 可只处理一页，见 [项目结构](docs/LANGUAGE.md#项目结构)。
 
 支持 `Box`、`Group`、`Text` / `Span` / `br`、`Image`、`Shape`、`Path`、`Table`、`Chart`，以及 `Token`、`Style`、`Component` / `Use`；放映用的页面切换、`Animate` 动画和 `Notes` 备注写成原生 PPTX。这是一门静态语言，不能执行 JavaScript。完整语法与限制见 [语言说明](docs/LANGUAGE.md)。
 
@@ -105,10 +113,7 @@ wasm-bindgen --target web --out-dir examples/output/wasm \
 import init, { Engine } from './wasm/slide_shuttle_wasm.js';
 await init();
 const engine = new Engine();
-engine.addFont('Noto Sans CJK SC', regularFontBytes);
-engine.addFont('Noto Sans CJK SC', boldFontBytes); // 文件必须提供该 family；传 undefined 则不校验
-engine.addImage('hero', pngBytes); // 对应源文件的 src="hero"
-const deck = engine.compile(sourceXml);
+const deck = engine.openQppt(qpptBytes); // Uint8Array，包含源文件、字体和图片
 const report = JSON.parse(deck.inspect());
 if (!report.valid) throw new Error(JSON.stringify(report.diagnostics));
 const png = deck.renderPng(0, 1); // 页码从 0 开始；同一编译结果支持多次渲染
@@ -118,18 +123,18 @@ deck.free();
 engine.free();
 ```
 
-多文件项目用 `engine.compileProject('deck.xml', JSON.stringify({ 'deck.xml': …, 'pages/01-cover.xml': … }))`；`importPptx` 返回 `{ entry, files, snapshot }`，可直接交给 `compileProject`。预览器可选择整个项目文件夹，并在源码面板逐个编辑文件。
+创作工具直接加载多文件工程时，用 `engine.compileProject('deck.xml', JSON.stringify({ 'deck.xml': …, 'pages/01-cover.xml': … }))`；`importPptx` 返回 `{ entry, files, snapshot }`，可直接交给 `compileProject`。预览器可选择整个项目文件夹，并在源码面板逐个编辑文件。
 
-`CompiledDeck` 持有不可变的资源和布局快照。翻页不重新排版；最多缓存 8 个“页码 + 步骤（或静态页）+ 缩放”PNG，总编码字节不超过 32 MiB。`renderRgba` / `renderRgbaStep` 直接提供 straight-alpha RGBA8，适合 Canvas/客户端纹理，省去 PNG 编解码且不缓存原始帧；像素格式和尺寸计算见 [渲染说明](docs/RENDERING.md#直接展示原生文稿)。同一 Engine 修改源文件时复用字体系统；修改字体/图片后重建编译器，旧文档仍然有效，需主动 `.free()`。原有 source-based 方法保留，复用最近一次相同源码的编译结果。缓存上限不是 WASM 总内存上限。
+`CompiledDeck` 持有不可变的资源和布局快照。翻页不重新排版；最多缓存 8 个“页码 + 步骤（或静态页）+ 缩放”PNG，总编码字节不超过 32 MiB。`renderRgba` / `renderRgbaStep` 直接提供 straight-alpha RGBA8，适合 Canvas/客户端纹理，省去 PNG 编解码且不缓存原始帧；像素格式和尺寸计算见 [渲染说明](docs/RENDERING.md#直接展示原生文稿)。同一 Engine 修改源文件时复用字体系统；修改字体/图片后重建编译器，旧文档仍然有效，需主动 `.free()`。WASM 统一使用工程编译或 QPPT 加载；单源码方法已移除。缓存上限不是 WASM 总内存上限。
 
-本地 [WASM 预览器](examples/wasm-preview.html) 支持 XML / 有限 PPTX 导入、翻页、键盘/触屏按步放映、当前步骤截图、源文件修改、诊断与损失查看、PNG/PDF 下载和自创稿 PPTX 导出。`examples/show.xml` 可验证原生放映。构建 web bindings 并下载内置字体后启动：
+本地 [WASM 预览器](examples/wasm-preview.html) 支持 QPPT / 多文件工程 / 有限 PPTX 导入、翻页、键盘/触屏按步放映、当前步骤截图、源文件修改、诊断与损失查看、PNG/PDF 下载和自创稿 PPTX 导出。`examples/show.xml` 可验证原生放映。构建 web bindings 并下载内置字体后启动：
 
 ```bash
 python3 tools/fetch_fonts.py
 python3 -m http.server 8088 --bind 127.0.0.1 --directory examples
 ```
 
-访问 `http://localhost:8088/wasm-preview.html`，直接选择文稿并点“打开并预览”，无需手动提供字体。不选文稿时加载中文示例；也可以选择 `examples/components.xml` 和图片 `examples/palette.png`。预览应用随附 Noto CJK 常规、粗体，首次从同源加载约 38 MiB，后续打开复用字体字节；发布页面时须保留 [fonts 资产与许可](examples/fonts/README.md)。编译与渲染在 Worker 内运行，取消会终止 Worker，重新打开会加载新实例。文件在本机处理。
+访问 `http://localhost:8088/wasm-preview.html`，直接选择文稿并点“打开并预览”，无需手动提供字体。不选文稿时加载中文示例；交付文稿请选择 `.qppt`；编辑工程可打开项目文件夹。QPPT 使用内嵌资源，不下载内置字体。工程和 PPTX 预览可使用随附的 Noto CJK 常规、粗体，首次从同源加载约 38 MiB，后续打开复用字体字节；发布页面时须保留 [fonts 资产与许可](examples/fonts/README.md)。编译与渲染在 Worker 内运行，取消会终止 Worker，重新打开会加载新实例。文件在本机处理。
 
 预览器默认使用内置字体替代未提供的字体/样式，并显示提示；不修改源编辑器中的字体声明。可在“字体与图片”中补充原字体，或关闭替代恢复严格检查。字体替代会影响文字宽度与换行，不保证原稿外观。核心/CLI 与默认 WASM API 仍严格检查字体；宿主可显式用 `Engine.setFontFallback('Noto Sans CJK SC')` 开启替代，用 `undefined` 关闭。
 
@@ -163,4 +168,4 @@ python3 skills/slideshuttle/scripts/build.py --doctor
 python3 skills/slideshuttle/scripts/build.py /path/to/deck.xml --out /path/to/output/v1
 ```
 
-构建会检查并生成 PPTX、PDF、逐页 PNG 与本地静态总览，自动提供项目自带的中文常规/粗体；可用 --repo / --cli / --font 指定其他运行环境。视觉复核仍由创作 Agent 查看实际渲染完成。已有 PPTX 的损失/基线保护继续由 CLI 执行。
+构建会检查并生成 QPPT、PPTX、PDF、逐页 PNG 与本地静态总览，自动提供项目自带的中文常规/粗体；可用 --repo / --cli / --font 指定其他运行环境。视觉复核仍由创作 Agent 查看实际渲染完成。已有 PPTX 的损失/基线保护继续由 CLI 执行。

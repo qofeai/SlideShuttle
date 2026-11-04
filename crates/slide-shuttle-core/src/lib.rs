@@ -7,6 +7,7 @@ pub mod icon;
 pub mod import;
 pub mod layout;
 pub mod model;
+pub mod package;
 pub mod parser;
 pub mod pptx;
 pub mod preset;

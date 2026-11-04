@@ -32,13 +32,13 @@
   [hidden]{display:none!important}body[data-busy="true"] #status{color:#087e6d}
   @media(max-width:850px){.app{grid-template-columns:1fr;padding:16px;gap:18px}aside{display:block}header{padding:16px}.toolbar{flex-wrap:wrap}}
 </style>
-<header><div><h1>SlideShuttle</h1><p>本地演示预览 · XML / PPTX</p></div><p>文件在本机处理，不会上传</p></header>
+<header><div><h1>SlideShuttle</h1><p>原生 QPPT 演示预览</p></div><p>文件在本机处理，不会上传</p></header>
 <div class="app">
   <aside>
-    <label>演示文稿（不选则打开中文示例）<input id="source" type="file" accept=".xml,.pptx"></label>
+    <label>演示文稿（不选则打开中文示例）<input id="source" type="file" accept=".qppt,.pptx"></label>
     <label>或打开项目文件夹<input id="folder" type="file" webkitdirectory aria-describedby="folder-help"></label>
     <p id="folder-help" class="note">文件夹内的 deck.xml 为入口；页面、共享库、图片和字体按相对路径读取。</p>
-    <p class="note">已内置中文常规、粗体字体，可以直接打开。首次预览会加载约 38 MiB 字体。</p>
+    <p class="note">QPPT 自带字体与图片。创作工程和 PPTX 预览可使用内置中文字体，首次加载约 38 MiB。</p>
     <details id="resources-panel"><summary>字体与图片（可选）</summary>
       <label>补充字体文件<input id="fonts" type="file" multiple accept=".ttf,.otf,.ttc" aria-describedby="font-help"></label>
       <p id="font-help" class="note">需要更接近原稿时，可提供文稿使用的字体。</p>

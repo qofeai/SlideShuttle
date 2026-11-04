@@ -32,7 +32,29 @@ pub fn load(
     input: &Path,
     fonts: &[std::path::PathBuf],
     page: Option<&str>,
-) -> Result<(Deck, Resources, usize)> {
+) -> Result<(Deck, Resources, usize, bool)> {
+    if input
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("qppt"))
+    {
+        let mut project = project(input)?;
+        let mut deck = project.deck()?;
+        let first = select(&mut deck, page)?;
+        let mut resources = project.take_resources(&deck)?;
+        for font in fonts {
+            resources.fonts.push(FontResource {
+                family: None,
+                bytes: read(font, 64 * 1024 * 1024)?,
+            });
+        }
+        return Ok((deck, resources, first, project.manifest.imported));
+    }
+    let entry_path = if input.is_dir() {
+        input.join("deck.xml")
+    } else {
+        input.to_owned()
+    };
+    let input = entry_path.as_path();
     let root = input
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -42,9 +64,10 @@ pub fn load(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let mut deck = slide_shuttle_core::parse_project(&entry, &text(input)?, |path| {
-        text(&local(&root, path)?)
-    })?;
+    let source = text(input)?;
+    slide_shuttle_core::package::require_project(&source)?;
+    let mut deck =
+        slide_shuttle_core::parse_project(&entry, &source, |path| text(&local(&root, path)?))?;
     // Select before loading media: inspecting one page must not decode/read unrelated
     // images or fail because another page's asset is still being authored.
     let mut first = 0;
@@ -68,6 +91,20 @@ pub fn load(
             family: None,
             bytes: read(path, 64 * 1024 * 1024)?,
         });
+    }
+    let mut imported = false;
+    let manifest = root.join("manifest.json");
+    if manifest.exists() {
+        let manifest: slide_shuttle_core::package::Manifest =
+            serde_json::from_slice(&read(&manifest, 1024 * 1024)?)?;
+        manifest.validate()?;
+        imported = manifest.imported;
+        for src in manifest.fonts {
+            resources.fonts.push(FontResource {
+                family: None,
+                bytes: read(&local(&root, &src)?, 64 * 1024 * 1024)?,
+            });
+        }
     }
     if resources.fonts.is_empty() {
         return Err(fail(
@@ -106,7 +143,73 @@ pub fn load(
     if total > 256 * 1024 * 1024 {
         return Err(fail("resource budget exceeds 256 MiB"));
     }
-    Ok((deck, resources, first))
+    Ok((deck, resources, first, imported))
+}
+fn select(deck: &mut Deck, page: Option<&str>) -> Result<usize> {
+    if let Some(page) = page {
+        let first = deck
+            .slides
+            .iter()
+            .position(|s| s.id == page)
+            .ok_or_else(|| fail(format!("no slide with id {page}")))?;
+        deck.slides = vec![deck.slides.swap_remove(first)];
+        Ok(first)
+    } else {
+        Ok(0)
+    }
+}
+pub fn project(input: &Path) -> Result<slide_shuttle_core::package::Project> {
+    use slide_shuttle_core::{
+        baseline::Baseline,
+        package::{MAX_BYTES, Manifest, Project},
+    };
+    if input
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("qppt"))
+    {
+        return Project::read(&read(input, MAX_BYTES as u64)?);
+    }
+    let entry_path = if input.is_dir() {
+        input.join("deck.xml")
+    } else {
+        input.to_owned()
+    };
+    let root = entry_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .canonicalize()?;
+    let entry = entry_path
+        .file_name()
+        .ok_or_else(|| fail("missing project entry"))?
+        .to_string_lossy();
+    let manifest_path = root.join("manifest.json");
+    let mut manifest: Manifest = if manifest_path.exists() {
+        serde_json::from_slice(&read(&manifest_path, 1024 * 1024)?)?
+    } else {
+        Manifest::default()
+    };
+    let baseline_path = root.join(".slide-shuttle/base.json");
+    if baseline_path.exists() {
+        let base: Baseline = serde_json::from_slice(&read(&baseline_path, 64 * 1024 * 1024)?)?;
+        if base.imported {
+            manifest.imported = true;
+            manifest.losses = base.native.losses;
+        }
+    }
+    Project::load(&entry, manifest, |name| {
+        read(&local(&root, name)?, 64 * 1024 * 1024)
+    })
+}
+pub fn source_root(input: &Path) -> &Path {
+    if input.is_dir() {
+        input
+    } else {
+        input
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+    }
 }
 fn local(root: &Path, src: &str) -> Result<std::path::PathBuf> {
     let p = Path::new(src);
@@ -172,12 +275,37 @@ pub fn write_directory(path: &Path, render: impl FnOnce(&Path) -> Result<()>) ->
     fs::create_dir(path)?;
     let mut published = Vec::new();
     let result = (|| {
-        let mut entries = fs::read_dir(stage.path())?.collect::<std::io::Result<Vec<_>>>()?;
+        fn collect(
+            root: &Path,
+            dir: &Path,
+            files: &mut Vec<std::path::PathBuf>,
+        ) -> std::io::Result<()> {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    collect(root, &entry.path(), files)?;
+                } else {
+                    files.push(
+                        entry
+                            .path()
+                            .strip_prefix(root)
+                            .expect("staged file stays inside root")
+                            .to_owned(),
+                    );
+                }
+            }
+            Ok(())
+        }
+        let mut entries = Vec::new();
+        collect(stage.path(), stage.path(), &mut entries)?;
         // The manifest is the completion marker for readers of a newly published deck.
-        entries.sort_by_key(|entry| entry.file_name() == "manifest.json");
+        entries.sort_by_key(|entry| entry == Path::new("manifest.json"));
         for entry in entries {
-            let target = path.join(entry.file_name());
-            fs::hard_link(entry.path(), &target)?;
+            let target = path.join(&entry);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::hard_link(stage.path().join(entry), &target)?;
             published.push(target);
         }
         Ok::<_, std::io::Error>(())
@@ -186,6 +314,17 @@ pub fn write_directory(path: &Path, render: impl FnOnce(&Path) -> Result<()>) ->
         for file in published {
             let _ = fs::remove_file(file);
         }
+        fn empty_dirs(path: &Path) {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                        empty_dirs(&entry.path());
+                    }
+                }
+            }
+            let _ = fs::remove_dir(path);
+        }
+        empty_dirs(path);
         let _ = fs::remove_dir(path);
     }
     result.map_err(Error::Io)

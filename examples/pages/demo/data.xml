@@ -1,0 +1,25 @@
+<Slide id="data" background="#FFFFFF">
+    <Box id="data/frame" class="frame" style="gap:20px">
+      <Text id="data/label" style="height:28px;font-size:16px;line-height:26px;color:var(--accent)">DATA, NOT SCREENSHOTS / 保留数据</Text>
+      <Text id="data/title" class="title" style="height:66px">同一份数据，连接预览与交付。</Text>
+      <Box id="data/content" style="display:grid;grid-template-columns:7fr 5fr;gap:40px;height:360px">
+        <Chart id="data/chart" type="bar" data-labels="value" style="height:350px;font-size:16px;color:#536B78">
+          <Labels>第一轮|第二轮|第三轮|第四轮</Labels>
+          <Series name="示例方案 A" color="#09A88F">28 45 63 82</Series>
+          <Series name="示例方案 B" color="#B1D9D1">20 30 48 61</Series>
+        </Chart>
+        <Box id="data/details" style="display:flex;flex-direction:column;gap:20px">
+          <Text id="data/table-title" style="height:40px;font-size:26px;line-height:36px;font-weight:700;color:var(--ink)">交付对象的性质</Text>
+          <Table id="data/table" columns="1 1" style="background:#FFFFFF;height:252px;font-size:18px;line-height:28px;color:#142B36">
+            <Row style="background:#EBF0F8;font-weight:700"><Cell>对象</Cell><Cell>PPTX 表达</Cell></Row>
+            <Row><Cell>标题与正文</Cell><Cell>原生文本框</Cell></Row>
+            <Row><Cell>结构化数据</Cell><Cell>表格 / 图表</Cell></Row>
+            <Row><Cell>复合图形</Cell><Cell>原生分组</Cell></Row>
+          </Table>
+        </Box>
+      </Box>
+      <Box id="data/callout" style="padding:18px 22px;height:90px;background:#EFF5F3;border-radius:12px">
+        <Text id="data/footnote" style="font-size:18px;line-height:28px;height:56px;color:#536B78">图表数据为演示用示例，不代表性能测试结果。Office / WPS 中的实际渲染与编辑行为仍需独立验收。</Text>
+      </Box>
+    </Box>
+  </Slide>

@@ -13,6 +13,9 @@ import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
+from project_source import write_project
 
 
 def normal(text):
@@ -89,7 +92,7 @@ def main():
                 doc.append(declaration)
         doc.append(slide)
         source = case / "source.xml"
-        source.write_text(ET.tostring(doc, encoding="unicode"))
+        write_project(doc, source)
         checked = execute([binary,"check",str(source),*font_args], case/"check-command.json")
         try:
             check = json.loads(checked["stdout"])

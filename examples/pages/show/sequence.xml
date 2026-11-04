@@ -1,0 +1,12 @@
+<Slide id="sequence" background="#FFFFFF">
+    <Text id="title" style="position:absolute;left:48px;top:32px;width:544px;height:70px;font-size:28px;line-height:38px">原生格式，直接按步放映</Text>
+    <Shape id="red" style="position:absolute;left:48px;top:160px;width:80px;height:80px;background:#EF4444"/>
+    <Shape id="blue" style="position:absolute;left:300px;top:160px;width:80px;height:80px;background:#2563EB"/>
+    <Animate target="title" effect="fade-in" trigger="after-previous"/>
+    <Animate target="red" effect="fade-in"/>
+    <Animate target="blue" effect="appear" trigger="with-previous"/>
+    <Animate target="red" effect="motion-path" path="M 0 0 L 40 0" trigger="after-previous"/>
+    <Animate target="red" effect="fade-out"/>
+    <Animate target="blue" effect="transparency" amount="0.4" trigger="with-previous"/>
+    <Notes>步骤 0 为自动入场后、首次点击前。连续动画与翻页过渡尚未实现。</Notes>
+  </Slide>

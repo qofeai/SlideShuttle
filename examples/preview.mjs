@@ -19,6 +19,7 @@ let presentationStep = 0;
 let pageReports = [];
 let deckWidth = 0;
 let deckHeight = 0;
+let builtinFontsAvailable = true;
 /** Sources being previewed: entry path plus every project file, edited one file at a time. */
 let project = { entry: 'demo.xml', files: {} };
 let currentFile = 'demo.xml';
@@ -149,17 +150,19 @@ $('file').onchange = () => { project.files[currentFile] = $('xml').value; showPr
 async function folderProject(files) {
   const inside = file => file.webkitRelativePath.split('/').slice(1).join('/');
   const sources = {}; const images = []; const fonts = [];
+  let manifest;
   for (const file of files) {
     const name = inside(file);
-    if (/\.xml$/i.test(name)) {
+    if (name === 'manifest.json') manifest = JSON.parse(await file.text());
+    else if (/\.xml$/i.test(name)) {
       if (file.size > 4 * 1024 * 1024) throw new Error(`源文件 ${name} 超过 4 MiB。`);
       sources[name] = await file.text();
-    } else if (/\.(png|jpe?g)$/i.test(name)) images.push({ name, bytes: await file.arrayBuffer() });
+    } else if (/\.(png|jpe?g|svg)$/i.test(name)) images.push({ name, bytes: await file.arrayBuffer() });
     else if (/\.(ttf|otf|ttc)$/i.test(name)) fonts.push({ name, bytes: await file.arrayBuffer() });
   }
   const entry = 'deck.xml' in sources ? 'deck.xml' : Object.keys(sources).find(name => !name.includes('/') && /^\s*(<\?xml[^>]*>\s*)?<Deck[\s>]/.test(sources[name]));
   if (!entry) throw new Error('文件夹中没有 deck.xml 或根元素为 <Deck> 的入口文件。');
-  return { project: { entry, files: sources }, images, fonts };
+  return { project: { entry, files: sources }, images, fonts, manifest };
 }
 $('run').onclick = async () => {
   const operation = ++operationId;
@@ -168,30 +171,30 @@ $('run').onclick = async () => {
   setBusy(true); clearDocument(); document.body.dataset.state = 'loading';
   try {
     const folder = $('folder').files.length ? await folderProject([...$('folder').files]) : undefined;
+    const sourceFile = folder ? undefined : $('source').files[0];
+    const kind = sourceFile ? (sourceFile.name.toLowerCase().endsWith('.qppt') ? 'qppt' : 'pptx') : 'project';
+    if (sourceFile && !/\.(pptx|qppt)$/i.test(sourceFile.name)) throw new Error('请选择 QPPT 或 PPTX 演示文稿；创作时可打开项目文件夹。');
+    if (sourceFile && sourceFile.size > (kind === 'qppt' ? 256 : 64) * 1024 * 1024) throw new Error('演示文稿超过大小限制。');
+    builtinFontsAvailable = kind !== 'qppt';
     const resourceFiles = [...$('fonts').files, ...$('images').files];
     if (resourceFiles.length > 510 || resourceFiles.reduce((n, f) => n + f.size, BUILTIN_FONT_BYTES) > 256 * 1024 * 1024) throw new Error('字体与图片（含内置字体）合计超过 256 MiB 或 512 个文件。');
-    $('status').textContent = '正在加载内置中文字体（首次约 38 MiB）…';
-    const defaults = await loadBuiltinFonts(controller.signal);
+    $('status').textContent = kind === 'qppt' ? '正在读取 QPPT 文稿与内嵌资源…' : '正在加载内置中文字体（首次约 38 MiB）…';
+    const defaults = builtinFontsAvailable ? await loadBuiltinFonts(controller.signal) : [];
     const fonts = [...await selectedFiles($('fonts'), 64 * 1024 * 1024, '字体'), ...(folder?.fonts ?? []), ...defaults];
     const images = [...await selectedFiles($('images'), 32 * 1024 * 1024, '图片'), ...(folder?.images ?? [])];
     if (new Set(images.map(i => i.name)).size !== images.length) throw new Error('图片文件名重复，请使用唯一名称。');
     if (fonts.concat(images).reduce((n, f) => n + f.bytes.byteLength, 0) > 256 * 1024 * 1024) throw new Error('字体与图片合计超过 256 MiB。');
-    const sourceFile = folder ? undefined : $('source').files[0];
-    const kind = sourceFile?.name.toLowerCase().endsWith('.pptx') ? 'pptx' : 'xml';
-    if (sourceFile && !/\.(pptx|xml)$/i.test(sourceFile.name)) throw new Error('请选择 XML 或 PPTX 演示文稿。');
-    if (sourceFile && sourceFile.size > (kind === 'pptx' ? 64 : 4) * 1024 * 1024) throw new Error('演示文稿超过大小限制。');
-    const bytes = kind === 'pptx' ? await sourceFile.arrayBuffer() : undefined;
-    if (kind === 'xml') {
+    const bytes = sourceFile ? await sourceFile.arrayBuffer() : undefined;
+    if (kind === 'project') {
       if (folder) showProject(folder.project);
-      else if (sourceFile) showProject({ entry: sourceFile.name, files: { [sourceFile.name]: await sourceFile.text() } });
       else showProject(editedProject(), currentFile);
     }
-    const sources = kind === 'xml' ? editedProject() : undefined;
+    const sources = kind === 'project' ? editedProject() : undefined;
     if (operation !== operationId) return;
     const transfer = fonts.concat(images).map(file => file.bytes);
     if (bytes) transfer.push(bytes);
-    const fontFallback = $('font-fallback').checked ? BUILTIN_FONT_FAMILY : undefined;
-    const result = await client.open({ fonts, images, kind, bytes, project: sources, fontFallback }, transfer);
+    const fontFallback = $('font-fallback').checked && builtinFontsAvailable ? BUILTIN_FONT_FAMILY : undefined;
+    const result = await client.open({ fonts, images, kind, bytes, project: sources, fontFallback, manifest: folder?.manifest }, transfer);
     if (operation !== operationId) return;
     applyDocument(result);
     await showPage(0, operation);
@@ -203,7 +206,7 @@ $('recompile').onclick = async () => {
   const sources = editedProject();
   setBusy(true); clearDocument(); document.body.dataset.state = 'loading';
   try {
-    const result = await client.compile(sources, $('font-fallback').checked ? BUILTIN_FONT_FAMILY : undefined);
+    const result = await client.compile(sources, $('font-fallback').checked && builtinFontsAvailable ? BUILTIN_FONT_FAMILY : undefined);
     if (operation !== operationId) return;
     applyDocument(result); await showPage(0, operation);
   } catch (error) { showError(error, operation); }
@@ -299,7 +302,15 @@ for (const [id, method, mime, suffix] of [['pdf', 'exportPdf', 'application/pdf'
 try {
   const response = await fetch('./demo.xml');
   if (!response.ok) throw new Error('无法加载中文示例。');
-  showProject({ entry: 'demo.xml', files: { 'demo.xml': await response.text() } });
+  const entry = await response.text();
+  const files = { 'demo.xml': entry };
+  const references = [...entry.matchAll(/<(?:Slide|Library)\s+src="([^"]+)"/g)].map(match => match[1]);
+  await Promise.all(references.map(async name => {
+    const result = await fetch(`./${name}`);
+    if (!result.ok) throw new Error(`无法加载示例文件 ${name}。`);
+    files[name] = await result.text();
+  }));
+  showProject({ entry: 'demo.xml', files });
   await client.ready; workerReady = true;
   selectionChanged();
 } catch (error) { $('status').textContent = error.message || String(error); }

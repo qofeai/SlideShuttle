@@ -16,10 +16,14 @@ pub struct Engine {
     font_builds: u32,
     cache_hits: u32,
     fallback_family: Option<String>,
+    imported: bool,
+    losses: Vec<import::Loss>,
 }
 #[wasm_bindgen]
 pub struct CompiledDeck {
     document: Arc<CompiledDocument>,
+    imported: bool,
+    losses: Vec<import::Loss>,
 }
 
 #[wasm_bindgen]
@@ -40,7 +44,10 @@ impl CompiledDeck {
         self.document.scene().height
     }
     pub fn inspect(&self) -> std::result::Result<String, JsValue> {
-        serde_json::to_string(&self.document.inspect()).map_err(js)
+        let mut report = self.document.inspect();
+        report["imported"] = serde_json::json!(self.imported);
+        report["losses"] = serde_json::json!(self.losses);
+        serde_json::to_string(&report).map_err(js)
     }
     #[wasm_bindgen(js_name=renderPng)]
     pub fn render_png(&self, page: usize, scale: f32) -> std::result::Result<Vec<u8>, JsValue> {
@@ -83,6 +90,11 @@ impl CompiledDeck {
     }
     #[wasm_bindgen(js_name=exportPptx)]
     pub fn export_pptx(&self) -> std::result::Result<Vec<u8>, JsValue> {
+        if self.imported {
+            return Err(js(
+                "imported document PPTX rebuilding requires CLI baseline and loss decisions",
+            ));
+        }
         self.document.export_pptx().map_err(js)
     }
 }
@@ -122,11 +134,6 @@ impl Engine {
             .insert(name, bytes);
         Ok(())
     }
-    pub fn compile(&mut self, source: &str) -> std::result::Result<CompiledDeck, JsValue> {
-        Ok(CompiledDeck {
-            document: self.document(source)?,
-        })
-    }
     /// Compile a multi-file project. `files_json` is a JSON object from project-relative
     /// path to source text; `entry` names the `<Deck>` file.
     #[wasm_bindgen(js_name=compileProject)]
@@ -142,9 +149,33 @@ impl Engine {
         let document = self.cached_or(key, |compiler| {
             let files: std::collections::BTreeMap<String, String> =
                 serde_json::from_str(files_json)?;
+            package::require_project(
+                files
+                    .get(entry)
+                    .ok_or_else(|| Error::Invalid("missing project entry".into()))?,
+            )?;
             compiler.compile_deck(parse_files(entry, &files)?)
         })?;
-        Ok(CompiledDeck { document })
+        Ok(CompiledDeck {
+            document,
+            imported: self.imported,
+            losses: self.losses.clone(),
+        })
+    }
+    /// Open a self-contained QPPT directly, replacing the Engine's active resources.
+    #[wasm_bindgen(js_name=openQppt)]
+    pub fn open_qppt(&mut self, bytes: &[u8]) -> std::result::Result<CompiledDeck, JsValue> {
+        let project = self.load_qppt(bytes)?;
+        self.compile_project(
+            package::ENTRY,
+            &serde_json::to_string(&project.files).map_err(js)?,
+        )
+    }
+    /// Load QPPT resources and return editable source files and public import metadata.
+    #[wasm_bindgen(js_name=importQppt)]
+    pub fn import_qppt(&mut self, bytes: &[u8]) -> std::result::Result<String, JsValue> {
+        let project = self.load_qppt(bytes)?;
+        serde_json::to_string(&serde_json::json!({"entry":package::ENTRY,"files":project.files,"manifest":project.manifest})).map_err(js)
     }
     /// Optional, reported preview substitutions. The default remains strict.
     #[wasm_bindgen(js_name=setFontFallback)]
@@ -177,28 +208,6 @@ impl Engine {
             .map_err(js)?;
         serde_json::to_string(&measured).map_err(js)
     }
-    /// Source-based calls share the same single-entry compiled cache.
-    pub fn check(&mut self, source: &str) -> std::result::Result<String, JsValue> {
-        let d = self.document(source)?;
-        serde_json::to_string(&serde_json::json!({"valid":!d.scene().has_errors(),"diagnostics":d.scene().diagnostics,"pages":d.page_count()})).map_err(js)
-    }
-    #[wasm_bindgen(js_name=renderPng)]
-    pub fn render_png(
-        &mut self,
-        source: &str,
-        page: usize,
-        scale: f32,
-    ) -> std::result::Result<Vec<u8>, JsValue> {
-        self.document(source)?.render_png(page, scale).map_err(js)
-    }
-    #[wasm_bindgen(js_name=renderPdf)]
-    pub fn render_pdf(&mut self, source: &str) -> std::result::Result<Vec<u8>, JsValue> {
-        self.document(source)?.render_pdf().map_err(js)
-    }
-    #[wasm_bindgen(js_name=exportPptx)]
-    pub fn export_pptx(&mut self, source: &str) -> std::result::Result<Vec<u8>, JsValue> {
-        self.document(source)?.export_pptx().map_err(js)
-    }
     #[wasm_bindgen(js_name=importPptx)]
     pub fn import_pptx(&mut self, bytes: &[u8]) -> std::result::Result<String, JsValue> {
         let imported = import::import_pptx(bytes).map_err(js)?;
@@ -215,6 +224,8 @@ impl Engine {
         )
         .map_err(js)?;
         self.invalidate();
+        self.imported = true;
+        self.losses = imported.snapshot.losses.clone();
         Arc::make_mut(&mut self.resources)
             .images
             .extend(imported.assets);
@@ -227,9 +238,23 @@ impl Engine {
         self.invalidate();
         self.resources = Arc::new(Resources::default());
         self.fallback_family = None;
+        self.imported = false;
+        self.losses.clear();
     }
 }
 impl Engine {
+    fn load_qppt(&mut self, bytes: &[u8]) -> std::result::Result<package::Project, JsValue> {
+        let mut project = package::Project::read(bytes).map_err(js)?;
+        let resources = project
+            .take_resources(&project.deck().map_err(js)?)
+            .map_err(js)?;
+        self.invalidate();
+        self.resources = Arc::new(resources);
+        self.fallback_family = None;
+        self.imported = project.manifest.imported;
+        self.losses = project.manifest.losses.clone();
+        Ok(project)
+    }
     fn invalidate(&mut self) {
         self.cached = None;
         self.compiler = None;
@@ -244,9 +269,6 @@ impl Engine {
             self.font_builds += 1;
         }
         Ok(self.compiler.as_mut().unwrap())
-    }
-    fn document(&mut self, source: &str) -> std::result::Result<Arc<CompiledDocument>, JsValue> {
-        self.cached_or(source.into(), |compiler| compiler.compile(source))
     }
     /// One cached compilation, keyed by everything that was compiled.
     fn cached_or(

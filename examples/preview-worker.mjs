@@ -31,18 +31,26 @@ self.onmessage = async ({ data: message }) => {
       if (type === 'load') {
         resourcesLoaded = false;
         engine.clear();
+        imported = false;
+        importLosses = [];
         progress(id, revision, '正在加载字体和图片…');
-        for (const font of payload.fonts) engine.addFont(undefined, new Uint8Array(font.bytes));
+        if (payload.kind === 'qppt') {
+          const result = JSON.parse(engine.importQppt(new Uint8Array(payload.bytes)));
+          project = { entry: result.entry, files: result.files };
+          imported = result.manifest.imported ?? false;
+          importLosses = result.manifest.losses ?? [];
+        }
+        for (const font of payload.fonts ?? []) engine.addFont(undefined, new Uint8Array(font.bytes));
         for (const image of payload.images ?? []) engine.addImage(image.name, new Uint8Array(image.bytes));
         resourcesLoaded = true;
-        imported = payload.kind === 'pptx';
-        importLosses = [];
-        if (imported) {
+        if (payload.kind === 'pptx') {
+          imported = true;
           progress(id, revision, '正在读取演示文稿…');
           const result = JSON.parse(engine.importPptx(new Uint8Array(payload.bytes)));
           project = { entry: result.entry, files: result.files };
           importLosses = result.snapshot.losses;
         }
+        if (payload.manifest?.imported) { imported = true; importLosses = payload.manifest.losses ?? []; }
       }
       engine.setFontFallback(payload.fontFallback);
       progress(id, revision, '正在排版…');

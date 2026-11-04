@@ -28,7 +28,9 @@ fn success(output: Output) -> Value {
 }
 fn setup() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("source.xml"),r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide id="s"><Text id="t" style="width:500px;height:100px">Original body</Text></Slide></Deck>"#).unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(dir.path().join("source.xml"),r#"<Deck width="640px" height="360px" font-family="DejaVu Sans"><Slide src="pages/s.xml"/></Deck>"#).unwrap();
+    fs::write(dir.path().join("pages/s.xml"),r#"<Slide id="s"><Text id="t" style="width:500px;height:100px">Original body</Text></Slide>"#).unwrap();
     dir
 }
 
@@ -254,7 +256,7 @@ fn declared_resource_cannot_escape_project_root() {
     let root = setup();
     fs::write(
         root.path().join("source.xml"),
-        r#"<Deck><Font family="DejaVu Sans" src="../outside.ttf"/><Slide id="s"/></Deck>"#,
+        r#"<Deck><Font family="DejaVu Sans" src="../outside.ttf"/><Slide src="pages/s.xml"/></Deck>"#,
     )
     .unwrap();
     let result = run(root.path(), &["check", "source.xml"], false);
@@ -361,11 +363,11 @@ fn cli_loads_multi_file_projects_and_checks_one_page() {
 fn cli_step_manifest_names_the_native_states_and_failed_render_leaves_no_output() {
     let root = setup();
     let p = root.path();
-    let source = fs::read_to_string(p.join("source.xml")).unwrap().replace(
+    let source = fs::read_to_string(p.join("pages/s.xml")).unwrap().replace(
         "</Slide>",
         r#"<Animate target="t" effect="appear"/></Slide>"#,
     );
-    fs::write(p.join("source.xml"), source).unwrap();
+    fs::write(p.join("pages/s.xml"), source).unwrap();
     success(run(
         p,
         &["render", "source.xml", "--out", "steps", "--steps"],
@@ -400,7 +402,13 @@ fn cli_step_manifest_names_the_native_states_and_failed_render_leaves_no_output(
 fn selecting_a_page_loads_only_its_media_and_keeps_original_page_number() {
     let root = setup();
     let p = root.path();
-    fs::write(p.join("source.xml"), r#"<Deck font-family="DejaVu Sans"><Slide id="unfinished"><Image id="missing" src="not-authored-yet.png"/></Slide><Slide id="ready"><Text id="title" style="width:500px;height:100px">Work on one page</Text></Slide></Deck>"#).unwrap();
+    fs::write(p.join("source.xml"), r#"<Deck font-family="DejaVu Sans"><Slide src="pages/unfinished.xml"/><Slide src="pages/ready.xml"/></Deck>"#).unwrap();
+    fs::write(
+        p.join("pages/unfinished.xml"),
+        r#"<Slide id="unfinished"><Image id="missing" src="not-authored-yet.png"/></Slide>"#,
+    )
+    .unwrap();
+    fs::write(p.join("pages/ready.xml"), r#"<Slide id="ready"><Text id="title" style="width:500px;height:100px">Work on one page</Text></Slide>"#).unwrap();
     assert!(!run(p, &["check", "source.xml"], true).status.success());
     assert_eq!(
         success(run(p, &["check", "source.xml", "--page", "ready"], true))["valid"],
@@ -425,4 +433,130 @@ fn selecting_a_page_loads_only_its_media_and_keeps_original_page_number() {
             .status
             .success()
     );
+}
+
+#[test]
+fn qppt_pack_unpack_and_render_are_portable_and_preserve_private_boundaries() {
+    let root = setup();
+    let p = root.path();
+    fs::create_dir_all(p.join(".slide-shuttle")).unwrap();
+    fs::write(p.join(".slide-shuttle/private.txt"), "private history").unwrap();
+    success(run(
+        p,
+        &["pack", "source.xml", "--out", "presentation.qppt"],
+        true,
+    ));
+    let inspection = success(run(p, &["inspect", "presentation.qppt"], false));
+    assert_eq!(inspection["format"], "qppt");
+    assert!(inspection["manifest"].get("version").is_none());
+    assert_eq!(inspection["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        success(run(p, &["check", "presentation.qppt"], false))["valid"],
+        true
+    );
+    success(run(
+        p,
+        &["render", "presentation.qppt", "--out", "packed-preview"],
+        false,
+    ));
+    success(run(
+        p,
+        &["render", "source.xml", "--out", "source-preview"],
+        true,
+    ));
+    assert_eq!(
+        fs::read(p.join("packed-preview/slide-001.png")).unwrap(),
+        fs::read(p.join("source-preview/slide-001.png")).unwrap()
+    );
+    success(run(
+        p,
+        &["unpack", "presentation.qppt", "--out", "unpacked"],
+        false,
+    ));
+    assert!(!p.join("unpacked/.slide-shuttle").exists());
+    assert_eq!(
+        success(run(p, &["check", "unpacked"], false))["valid"],
+        true
+    );
+    success(run(p, &["pack", "unpacked", "--out", "again.qppt"], false));
+    assert_eq!(
+        fs::read(p.join("presentation.qppt")).unwrap(),
+        fs::read(p.join("again.qppt")).unwrap()
+    );
+    assert!(
+        !run(
+            p,
+            &["unpack", "presentation.qppt", "--out", "unpacked"],
+            false
+        )
+        .status
+        .success()
+    );
+    assert!(
+        !run(
+            p,
+            &["pack", "source.xml", "--out", "presentation.qppt"],
+            true
+        )
+        .status
+        .success()
+    );
+    fs::write(p.join("inline.xml"), r#"<Deck><Slide id="p"/></Deck>"#).unwrap();
+    assert!(
+        !run(p, &["pack", "inline.xml", "--out", "invalid.qppt"], true)
+            .status
+            .success()
+    );
+    assert!(!run(p, &["check", "inline.xml"], true).status.success());
+    assert!(!p.join("invalid.qppt").exists());
+}
+
+#[test]
+fn qppt_does_not_erase_import_rebuild_requirements() {
+    let root = setup();
+    let p = root.path();
+    success(run(
+        p,
+        &["export", "source.xml", "--out", "original.pptx"],
+        true,
+    ));
+    success(run(
+        p,
+        &["import", "original.pptx", "--out", "imported"],
+        true,
+    ));
+    success(run(
+        p,
+        &["pack", "imported", "--out", "imported.qppt"],
+        true,
+    ));
+    assert_eq!(
+        success(run(p, &["inspect", "imported.qppt"], false))["manifest"]["imported"],
+        true
+    );
+    assert!(
+        !run(p, &["export", "imported.qppt", "--out", "lost.pptx"], false)
+            .status
+            .success()
+    );
+    success(run(
+        p,
+        &["unpack", "imported.qppt", "--out", "portable-import"],
+        false,
+    ));
+    assert!(
+        !run(
+            p,
+            &[
+                "export",
+                "portable-import/deck.xml",
+                "--out",
+                "lost-again.pptx"
+            ],
+            false
+        )
+        .status
+        .success()
+    );
+    assert!(!p.join("lost.pptx").exists());
 }

@@ -3,6 +3,7 @@ import argparse
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from zipfile import ZipFile
+from project_source import write_project
 
 A='http://schemas.openxmlformats.org/drawingml/2006/main'
 P='http://schemas.openxmlformats.org/presentationml/2006/main'
@@ -75,6 +76,6 @@ def main():
     args.out.parent.mkdir(parents=True,exist_ok=True);args.expected.parent.mkdir(parents=True,exist_ok=True)
     with ZipFile(args.out,'w')as z:
         for info,data in parts.values():z.writestr(info,data)
-    args.expected.write_text('<Deck font-family="Noto Sans CJK SC">'+''.join(expected)+'</Deck>')
+    write_project(ET.fromstring('<Deck font-family="Noto Sans CJK SC">'+''.join(expected)+'</Deck>'), args.expected)
 
 if __name__=='__main__':main()
