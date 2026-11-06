@@ -542,13 +542,13 @@ pub fn render_rgba_step(
     let (width, height) = (surface.width(), surface.height());
     let mut pixels = surface.take();
     // tiny-skia stores premultiplied channels. ImageData requires straight alpha.
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         if pixel[3] != 255 {
             let c =
                 tiny_skia::PremultipliedColorU8::from_rgba(pixel[0], pixel[1], pixel[2], pixel[3])
                     .expect("tiny-skia pixels are premultiplied")
                     .demultiply();
-            pixel.copy_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
+            *pixel = [c.red(), c.green(), c.blue(), c.alpha()];
         }
     }
     Ok(RgbaFrame {
