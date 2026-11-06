@@ -1,7 +1,7 @@
 """Script-neutral visual audits: line measure, leading, contrast, accent hues, type scale, title anchoring.
 
 Every rule is expressed in em, ratios or colour maths, so it applies to any writing system.
-Warnings are measurable defects; hints point at likely causes that still need a human look.
+Warnings flag readability risks; hints flag contextual choices that need a human look.
 """
 import colorsys
 import copy
@@ -12,7 +12,6 @@ MAX_MEASURE_EM = 32          # multi-line text wider than ~30em is hard to track
 MIN_BODY_LEADING = 1.25      # below 40px, multi-line text needs at least this line-height ratio
 MIN_TITLE_LEADING = 1.05     # 40-72px multi-line headings
 MAX_TEXT_SIZES = 5           # distinct reading sizes below 48px across the deck
-MAX_ACCENT_HUES = 2          # one accent, plus at most one for a good/bad contrast
 TITLE_TOLERANCE_PX = 4
 CONTENT_TYPES = {None, 'content', 'contents'}
 INHERITED = ('color', 'font-size', 'font-weight')
@@ -251,7 +250,8 @@ def audit_visual(entry, check):
     title_anchor = None
 
     def warn(code, page, node, message):
-        warnings.append({'code': code, 'page': page, 'nodeId': node, 'message': message})
+        destination = hints if code in {'missing_title', 'title_position_shift', 'type_scale_sprawl'} else warnings
+        destination.append({'code': code, 'page': page, 'nodeId': node, 'message': message})
 
     for slide in deck.slides:
         sid = slide.attrib.get('id')
@@ -264,13 +264,13 @@ def audit_visual(entry, check):
 
         title = next((t for t in texts if t[0].attrib.get('id') == 'title'), None)
         if title is None:
-            warn('missing_title', sid, sid, f'Slide "{sid}" has no <Text id="title">. Every page needs a claim title; outline.md is built from it.')
+            warn('missing_title', sid, sid, f'Slide "{sid}" has no <Text id="title">. Add one if a visible title helps; image-only and section slides may omit it. outline.md uses this id when present.')
         elif slide.attrib.get('type') in CONTENT_TYPES and 'title' in nodes:
             rect = nodes['title']['rect']
             if title_anchor is None:
                 title_anchor = (sid, rect['x'], rect['y'])
             elif abs(rect['x'] - title_anchor[1]) > TITLE_TOLERANCE_PX or abs(rect['y'] - title_anchor[2]) > TITLE_TOLERANCE_PX:
-                warn('title_position_shift', sid, 'title', f'Title starts at ({rect["x"]:.0f}, {rect["y"]:.0f}) but "{title_anchor[0]}" starts at ({title_anchor[1]:.0f}, {title_anchor[2]:.0f}). Keep content-page titles on one anchor so they do not jump between slides.')
+                warn('title_position_shift', sid, 'title', f'Title starts at ({rect["x"]:.0f}, {rect["y"]:.0f}) but "{title_anchor[0]}" starts at ({title_anchor[1]:.0f}, {title_anchor[2]:.0f}). Check whether this is an intentional layout change.')
         if slide.find('Notes') is None:
             hints.append({'code': 'missing_notes', 'page': sid, 'nodeId': sid, 'message': f'Slide "{sid}" has no <Notes>. What was cut from the canvas belongs in the speaker notes.'})
 
@@ -312,8 +312,9 @@ def audit_visual(entry, check):
 
     reading = sorted(s for s in sizes if s < 48)
     if len(reading) > MAX_TEXT_SIZES:
-        warn('type_scale_sprawl', 'deck', 'deck', f'The deck uses {len(reading)} reading sizes below 48px ({", ".join(f"{s:g}" for s in reading)}). Keep at most {MAX_TEXT_SIZES} steps and reuse them through Style.')
+        warn('type_scale_sprawl', 'deck', 'deck', f'The deck uses {len(reading)} reading sizes below 48px ({", ".join(f"{s:g}" for s in reading)}). Check that the sizes have distinct roles and shared styles; additional levels may be appropriate.')
     hues = accent_hues(colors_in(deck))
-    if len(hues) > MAX_ACCENT_HUES:
-        warn('too_many_accents', 'deck', 'deck', f'The deck paints with {len(hues)} saturated hues (≈{", ".join(f"{h}°" for h in hues)}). Use one accent for evidence and action; a second only for a good/bad contrast.')
+    if len(hues) > 2:
+        hints.append({'code': 'palette_review', 'page': 'deck', 'nodeId': 'deck',
+                      'message': f'The source palette defines {len(hues)} saturated hues. Check that category, status and brand colours have consistent roles; multiple hues are allowed and are not a failure.'})
     return warnings, hints

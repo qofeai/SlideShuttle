@@ -85,6 +85,8 @@ if (qpptPath) {
   assert.equal(portable.compile, undefined, 'the single-source API was removed');
   const bytes = fs.readFileSync(qpptPath);
   const opened = portable.openQppt(bytes);
+  assert.equal(JSON.parse(portable.stats()).compilations, 1, 'opening a package compiles it once');
+  assert.equal(JSON.parse(portable.stats()).fontBuilds, 1, 'opening a package builds one font database');
   assert.equal(opened.pageCount, check.pages);
   assert.equal(JSON.parse(opened.inspect()).valid, true);
   if (nativeDir) assert(Buffer.from(opened.renderPng(0, 1)).equals(fs.readFileSync(path.join(nativeDir, 'slide-001.png'))));

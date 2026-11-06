@@ -1,3 +1,4 @@
+mod fonts;
 mod io;
 use clap::{Args, Parser, Subcommand};
 use serde_json::json;
@@ -39,6 +40,10 @@ enum Command {
         input: Input,
         #[arg(long)]
         out: PathBuf,
+        /// Keep supplied font files unchanged for offline editing with new characters.
+        /// By default only used faces, characters and layout dependencies are embedded.
+        #[arg(long)]
+        full_fonts: bool,
     },
     /// Extract a QPPT into a new editable project directory.
     Unpack {
@@ -174,7 +179,11 @@ fn review(
 }
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Pack { input, out } => {
+        Command::Pack {
+            input,
+            out,
+            full_fonts,
+        } => {
             if out
                 .extension()
                 .is_none_or(|e| !e.eq_ignore_ascii_case("qppt"))
@@ -189,15 +198,23 @@ fn run(cli: Cli) -> Result<()> {
                 project.add_font(io::read(font, 64 * 1024 * 1024)?)?;
             }
             let deck = project.deck()?;
-            let bytes = project.write()?;
-            let doc = Compiler::new(project.take_resources(&deck)?)?.compile_deck(deck)?;
+            let mut compiler = Compiler::new(project.resources(&deck)?)?;
+            compiler.collect_font_usage(!full_fonts);
+            let doc = compiler.compile_deck(deck)?;
+            drop(compiler);
             if doc.scene().has_errors() {
                 print(&doc.inspect())?;
                 return Err(fail("layout has errors"));
             }
+            let fonts = if full_fonts {
+                json!({"mode":"full","embeddedBytes":doc.resources().fonts.iter().map(|f| f.bytes.len()).sum::<usize>()})
+            } else {
+                fonts::compact(&mut project, &doc)?
+            };
+            let bytes = project.write()?;
             io::write_new(&out, &bytes)?;
             print(
-                &json!({"output":out,"format":"qppt","pages":doc.page_count(),"imported":project.manifest.imported}),
+                &json!({"output":out,"format":"qppt","pages":doc.page_count(),"imported":project.manifest.imported,"bytes":bytes.len(),"fonts":fonts}),
             )?;
         }
         Command::Unpack { input, out } => {

@@ -165,16 +165,21 @@ impl Engine {
     /// Open a self-contained QPPT directly, replacing the Engine's active resources.
     #[wasm_bindgen(js_name=openQppt)]
     pub fn open_qppt(&mut self, bytes: &[u8]) -> std::result::Result<CompiledDeck, JsValue> {
-        let project = self.load_qppt(bytes)?;
-        self.compile_project(
-            package::ENTRY,
-            &serde_json::to_string(&project.files).map_err(js)?,
-        )
+        let (_, deck) = self.load_qppt(bytes)?;
+        // Opening a binary package already parsed its project. Avoid serializing all
+        // XML to JSON only to parse both JSON and XML again on the first-frame path.
+        let document = Arc::new(self.compiler()?.compile_deck(deck).map_err(js)?);
+        self.compilations += 1;
+        Ok(CompiledDeck {
+            document,
+            imported: self.imported,
+            losses: self.losses.clone(),
+        })
     }
     /// Load QPPT resources and return editable source files and public import metadata.
     #[wasm_bindgen(js_name=importQppt)]
     pub fn import_qppt(&mut self, bytes: &[u8]) -> std::result::Result<String, JsValue> {
-        let project = self.load_qppt(bytes)?;
+        let (project, _) = self.load_qppt(bytes)?;
         serde_json::to_string(&serde_json::json!({"entry":package::ENTRY,"files":project.files,"manifest":project.manifest})).map_err(js)
     }
     /// Optional, reported preview substitutions. The default remains strict.
@@ -243,17 +248,19 @@ impl Engine {
     }
 }
 impl Engine {
-    fn load_qppt(&mut self, bytes: &[u8]) -> std::result::Result<package::Project, JsValue> {
+    fn load_qppt(
+        &mut self,
+        bytes: &[u8],
+    ) -> std::result::Result<(package::Project, Deck), JsValue> {
         let mut project = package::Project::read(bytes).map_err(js)?;
-        let resources = project
-            .take_resources(&project.deck().map_err(js)?)
-            .map_err(js)?;
+        let deck = project.deck().map_err(js)?;
+        let resources = project.take_resources(&deck).map_err(js)?;
         self.invalidate();
         self.resources = Arc::new(resources);
         self.fallback_family = None;
         self.imported = project.manifest.imported;
         self.losses = project.manifest.losses.clone();
-        Ok(project)
+        Ok((project, deck))
     }
     fn invalidate(&mut self) {
         self.cached = None;

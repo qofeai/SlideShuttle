@@ -115,6 +115,8 @@ def prepare_out_dir(out):
         return
     build_file = out / 'build.json'
     has_artifacts = (out / 'presentation.qppt').exists() or (out / 'presentation.pptx').exists()
+    delivery = out / 'deliverables'
+    has_artifacts = has_artifacts or (delivery.is_dir() and any(delivery.iterdir()))
     if build_file.is_file() and not has_artifacts:
         try:
             prev = json.loads(build_file.read_text(encoding='utf-8'))
@@ -231,7 +233,7 @@ def audit_design(source, check):
                 'code': 'font_too_small',
                 'page': 'design.xml',
                 'nodeId': f'Style:{name}',
-                'message': f'Style "{name}" uses font-size {sz:g}px (< {MIN_FONT_PX:g}px floor). Do not shrink fonts to cram text.',
+                'message': f'Style "{name}" uses font-size {sz:g}px (below the {MIN_FONT_PX:g}px presentation reference). Check readability at the intended viewing size.',
             })
         elif sz is not None and sz < MIN_BODY_FONT_PX and not MINOR_ID_RE.search(name):
             warnings.append({
@@ -269,7 +271,7 @@ def audit_design(source, check):
                         'code': 'unwanted_page_number_or_footer',
                         'page': slide_id,
                         'nodeId': nid,
-                        'message': f'Slide "{slide_id}" contains an unrequested page number, footer, or tool watermark ("{elem_text[:40].strip()}"). Remove page numbers and footers unless explicitly requested by the user.',
+                        'message': f'Slide "{slide_id}" contains a page number, footer, or watermark ("{elem_text[:40].strip()}"). Check whether it serves the user’s brief.',
                     })
                 eff_size = None
                 for cls in elem.attrib.get('class', '').split():
@@ -286,7 +288,7 @@ def audit_design(source, check):
                             'code': 'font_too_small',
                             'page': slide_id,
                             'nodeId': nid,
-                            'message': f'Font size {eff_size:g}px is below the {MIN_FONT_PX:g}px minimum ({sfile.name}). Cut text or split the slide.',
+                            'message': f'Font size {eff_size:g}px is below the {MIN_FONT_PX:g}px presentation reference ({sfile.name}). Check the intended reading size and adjust content or layout if needed.',
                         })
                     elif (
                         elem.tag == 'Text'
@@ -298,7 +300,7 @@ def audit_design(source, check):
                             'code': 'body_font_small',
                             'page': slide_id,
                             'nodeId': nid,
-                            'message': f'Text "{nid}" uses {eff_size:g}px (< {MIN_BODY_FONT_PX:g}px body minimum). Prefer short phrases at 20-26px.',
+                            'message': f'Text "{nid}" uses {eff_size:g}px (below the {MIN_BODY_FONT_PX:g}px presentation body reference). Review its role and viewing distance.',
                         })
 
         if chars > MAX_SLIDE_CHARS:
@@ -306,7 +308,7 @@ def audit_design(source, check):
                 'code': 'slide_too_dense',
                 'page': slide_id,
                 'nodeId': slide_id,
-                'message': f'Slide "{slide_id}" has {chars} visible characters (limit {MAX_SLIDE_CHARS}, ideal 60-150). Move explanations to <Notes> or split into multiple slides.',
+                'message': f'Slide "{slide_id}" has {chars} visible characters (presentation reference {MAX_SLIDE_CHARS}). Check whether the page is for speaking or independent reading before moving content to notes or splitting it.',
             })
 
         if node_count > MAX_SLIDE_NODES:
@@ -314,7 +316,7 @@ def audit_design(source, check):
                 'code': 'visual_clutter',
                 'page': slide_id,
                 'nodeId': slide_id,
-                'message': f'Slide "{slide_id}" has {node_count} rendered items (limit {MAX_SLIDE_NODES}). Remove nested wrapper boxes and keep >= 40% whitespace.',
+                'message': f'Slide "{slide_id}" has {node_count} rendered items. Check grouping and hierarchy; charts and diagrams can legitimately exceed the {MAX_SLIDE_NODES}-item presentation reference.',
             })
 
         max_lines = 0
@@ -327,7 +329,7 @@ def audit_design(source, check):
                         'code': 'paragraph_too_long',
                         'page': slide_id,
                         'nodeId': n.get('id'),
-                        'message': f'Text node "{n.get("id")}" wraps to {lc} lines (limit {MAX_LIST_LINES}). Use concise phrases instead of long paragraphs.',
+                        'message': f'Text node "{n.get("id")}" wraps to {lc} lines (presentation reference {MAX_LIST_LINES}). Review readability for the intended use.',
                     })
 
         page_metrics.append({
@@ -461,7 +463,8 @@ def main():
     parser.add_argument('--cli')
     parser.add_argument('--font', action='append', default=[])
     parser.add_argument('--scale', type=float, default=1)
-    parser.add_argument('--strict-design', action='store_true', help='Fail build if aesthetic/density audit reports warnings')
+    parser.add_argument('--strict-design', action='store_true', help='Opt in to failing on readability warnings; style suggestions never block')
+    parser.add_argument('--export', action='append', choices=['pdf', 'pptx'], default=[], help='Additional deliverable explicitly requested by the user (repeatable)')
     parser.add_argument('--doctor', action='store_true')
     args = parser.parse_args()
     out = None
@@ -480,6 +483,9 @@ def main():
         if not math.isfinite(args.scale) or args.scale <= 0:
             raise ValueError('scale must be positive and finite')
         prepare_out_dir(out)
+        delivery = out / 'deliverables'
+        delivery.mkdir()
+        qppt = delivery / 'presentation.qppt'
         summary = {'status': 'building', 'source': str(source), 'runtime': info, 'visualReview': 'pending'}
         fonts = [p for font in info['fonts'] for p in ['--font', font]]
         check = run_step(info, out, 'check', ['check', source, *fonts])
@@ -493,20 +499,42 @@ def main():
             design_audit['warningCount'] = len(design_audit['warnings'])
             design_audit['passed'] = not design_audit['warnings']
             design_audit['hints'] = hints
+        # These are contextual style choices, not correctness/readability failures.
+        style_codes = {'visual_clutter', 'unwanted_page_number_or_footer'}
+        suggestions = [w for w in design_audit['warnings'] if w['code'] in style_codes]
+        design_audit.setdefault('hints', []).extend(suggestions)
+        design_audit['warnings'] = [w for w in design_audit['warnings'] if w['code'] not in style_codes]
+        design_audit['warningCount'] = len(design_audit['warnings'])
+        design_audit['passed'] = not design_audit['warnings']
         if args.strict_design and not design_audit['passed']:
             raise ValueError(f'designAudit failed with {design_audit["warningCount"]} warning(s):\n' + json.dumps(design_audit, ensure_ascii=False, indent=2))
-        run_step(info, out, 'pack', ['pack', source, '--out', out / 'presentation.qppt', *fonts])
-        run_step(info, out, 'render', ['render', out / 'presentation.qppt', '--out', out / 'preview', '--pdf', '--scale', args.scale])
-        run_step(info, out, 'export', ['export', source, '--out', out / 'presentation.pptx', *fonts])
+        run_step(info, out, 'pack', ['pack', source, '--out', qppt, *fonts])
+        render_args = ['render', qppt, '--out', out / 'preview', '--scale', args.scale]
+        if 'pdf' in args.export:
+            render_args.append('--pdf')
+        run_step(info, out, 'render', render_args)
+        deliverables = [str(qppt)]
+        if 'pptx' in args.export:
+            pptx = delivery / 'presentation.pptx'
+            # Keep the export and its linked audit receipt together internally;
+            # only the requested document enters the delivery directory.
+            internal_pptx = out / 'exports/presentation.pptx'
+            run_step(info, out, 'export', ['export', source, '--out', internal_pptx, *fonts])
+            shutil.copyfile(internal_pptx, pptx)
+            with pptx.open('rb') as f:
+                if f.read(2) != b'PK':
+                    raise ValueError('invalid PPTX output')
+            deliverables.append(str(pptx))
         pages = sorted((out / 'preview').glob('slide-*.png'))
         if len(pages) != len(check['pages']):
             raise ValueError('rendered page count differs from check')
-        with (out / 'preview/deck.pdf').open('rb') as f:
-            if f.read(5) != b'%PDF-':
-                raise ValueError('invalid PDF output')
-        with (out / 'presentation.pptx').open('rb') as f:
-            if f.read(2) != b'PK':
-                raise ValueError('invalid PPTX output')
+        if 'pdf' in args.export:
+            pdf = out / 'preview/deck.pdf'
+            with pdf.open('rb') as f:
+                if f.read(5) != b'%PDF-':
+                    raise ValueError('invalid PDF output')
+            pdf = pdf.rename(delivery / 'presentation.pdf')
+            deliverables.append(str(pdf))
         gallery(out, pages, source.stem)
         sheet = contact_sheet(out, pages, info)
         story = outline(source)
@@ -514,13 +542,13 @@ def main():
         summary.update(
             status='built',
             pages=len(pages),
-            qppt=str(out / 'presentation.qppt'),
-            pptx=str(out / 'presentation.pptx'),
-            pdf=str(out / 'preview/deck.pdf'),
-            previews=[str(p) for p in pages],
-            gallery=str(out / 'index.html'),
-            contactSheet=sheet,
-            outline=outline_file,
+            deliverables=deliverables,
+            review={
+                'previews': [str(p) for p in pages],
+                'gallery': str(out / 'index.html'),
+                'contactSheet': sheet,
+                'outline': outline_file,
+            },
             diagnostics=check['diagnostics'],
             designAudit=design_audit,
         )
