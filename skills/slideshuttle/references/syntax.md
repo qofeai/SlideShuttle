@@ -1,6 +1,6 @@
 # 语法速查
 
-写源稿遇到语法问题时查这里。完整语法以仓库的 `docs/LANGUAGE.md` 为准；设计原则见 [design.md](design.md)，数字红线见 SKILL.md。
+写源稿遇到语法问题时查这里。完整语法以仓库的 `docs/LANGUAGE.md` 为准；设计建议见 [design.md](design.md) 和 SKILL.md。
 
 ## 1. 最小多文件工程模板
 
@@ -64,7 +64,7 @@
 |---|---|
 | **布局与剩余空间** | `Box` 默认 `display:block`（border-box）；支持 Flex 与显式 Grid（`grid-template-columns: 7fr 5fr`）。占满剩余宽度写 `flex-grow:1;flex-basis:0;min-width:0`，纵向占满剩余高度写 `flex-grow:1;flex-basis:0;min-height:0`（不支持 `flex:1` 简写）。`justify-content` 支持 flex-start / center / flex-end / space-between，`align-items` 支持 end；不支持 `align-content`。 |
 | **文字尺寸** | Text 省略 height 时按实际行数测量，这是默认写法。只有需要固定占位时才写 height，而且必须容纳全部行数。 |
-| **字体与字形安全** | Noto Sans CJK SC 含 400（常规）/ 700（粗体），**不支持斜体合成**。数学上下标必须用 `<Span style="vertical-align:sub">1</Span>` / `<Span style="vertical-align:super">2</Span>`，**切勿使用 `₁`、`₂`、`ₙ`、`✗`、`►` 等生僻 Unicode 字符**（会触发 `font has no glyph` 报错；对勾/叉号用 `✓` / `×`，箭头用 `→` 或 `Shape` / `Path`）。 |
+| **字体与字形安全** | 默认 Noto Sans CJK SC 提供 400 / 700，不合成斜体。用 `check` 确认所有字符和字重都有对应字形。默认字体缺少某符号时可换有覆盖的字体，或用 `Span vertical-align:sub/super`、`Shape` / `Path` 表达；不要把某一字体的覆盖限制当成 Unicode 禁令。 |
 | **富文本与列表** | `Text` 内要么只放行内内容（文本、`Span`、`A`、`br`），要么只放 `<P>` / `<List><Item>...</Item></List>`，**行内与块级不能混放**。XML 中 `<`、`>`、`&` 必须转义；避免源码缩进产生多余空格。 |
 | **图标 (Icon)** | 用 `python3 scripts/icons.py --list 关键词` 查找，再用 `python3 scripts/icons.py brain zap --out deck/icons` 拷贝；XML 中写 `<Icon id="ic" src="icons/zap.svg" style="width:32px;height:32px;color:#0284C7"/>`。 |
 | **矢量图形** | `Shape` 支持 187 种 OOXML 预设（`rect`, `ellipse`, `triangle`, `rightArrow`, `line` 等，可用 `slide-shuttle shapes` 查询）；线条加箭头写 `shape="line" style="border:2px solid #0284C7;marker-end:arrow"`。`Path` 支持 SVG `d` 语法与 `viewBox="100 100"`。 |

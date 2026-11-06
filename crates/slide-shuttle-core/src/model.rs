@@ -487,6 +487,13 @@ pub struct FontResource {
     pub family: Option<String>,
     pub bytes: Vec<u8>,
 }
+/// Faces and characters actually consulted during layout, including fallback faces,
+/// measured text, generated labels and OpenType substitutions.
+#[derive(Clone, Debug, Default)]
+pub struct FontUsage {
+    pub unicodes: std::collections::BTreeSet<u32>,
+    pub glyphs: std::collections::BTreeSet<u16>,
+}
 #[derive(Clone, Debug, Default)]
 pub struct Resources {
     pub fonts: Vec<FontResource>,

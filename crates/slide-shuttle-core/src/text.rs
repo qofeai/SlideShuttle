@@ -3,6 +3,44 @@ use cosmic_text::{
     Attrs, Buffer, Family, FontSystem, Metrics, Shaping, UnderlineStyle, Weight, Wrap,
 };
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+// fontdb and the renderer share the resource allocation. Loading a CJK collection
+// must not copy tens of MiB merely to give fontdb an owned byte source.
+struct FontBytes {
+    resources: Arc<Resources>,
+    index: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn font_database_borrows_the_renderer_allocation() {
+        let resources = Arc::new(Resources {
+            fonts: vec![FontResource {
+                family: None,
+                bytes: include_bytes!("../tests/fonts/DejaVuSans.ttf").to_vec(),
+            }],
+            ..Resources::default()
+        });
+        let pointer = resources.fonts[0].bytes.as_ptr();
+        let engine = TextEngine::from_shared(resources.clone()).unwrap();
+        let face = engine.system.db().faces().next().unwrap();
+        let cosmic_text::fontdb::Source::Binary(bytes) = &face.source else {
+            panic!("font must stay in memory");
+        };
+        assert_eq!(pointer, bytes.as_ref().as_ref().as_ptr());
+        drop(resources);
+        assert!(ttf_parser::Face::parse(bytes.as_ref().as_ref(), 0).is_ok());
+    }
+}
+impl AsRef<[u8]> for FontBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.resources.fonts[self.index].bytes
+    }
+}
 
 pub(crate) struct TextEngine {
     pub system: FontSystem,
@@ -11,6 +49,7 @@ pub(crate) struct TextEngine {
     coverage: BTreeMap<(String, u16, bool, char), bool>,
     /// Shaping for vertical lines: the font's vertical forms of punctuation and brackets.
     vertical: bool,
+    pub usage: Option<BTreeMap<(usize, u32), FontUsage>>,
 }
 #[derive(Default)]
 pub(crate) struct Shaped {
@@ -47,6 +86,12 @@ fn marker(list: ListMarker) -> String {
 }
 impl TextEngine {
     pub fn new(resources: &Resources) -> Result<Self> {
+        Self::from_shared(Arc::new(Resources {
+            fonts: resources.fonts.clone(),
+            images: BTreeMap::new(),
+        }))
+    }
+    pub fn from_shared(resources: Arc<Resources>) -> Result<Self> {
         if resources.fonts.is_empty() {
             return Err(invalid("at least one explicit font resource is required"));
         }
@@ -57,7 +102,10 @@ impl TextEngine {
                 return Err(invalid("font exceeds 64 MiB"));
             }
             let before = db.faces().map(|f| f.id).collect::<Vec<_>>();
-            db.load_font_data(font.bytes.clone());
+            db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(FontBytes {
+                resources: resources.clone(),
+                index: font_number,
+            })));
             let mut families = Vec::new();
             for f in db.faces().filter(|f| !before.contains(&f.id)) {
                 keys.insert(f.id, (font_number, f.index));
@@ -91,6 +139,7 @@ impl TextEngine {
             faces: keys,
             coverage: BTreeMap::new(),
             vertical: false,
+            usage: None,
         })
     }
     /// Shape paragraphs into one block: list items get a hanging indent and a marker,
@@ -261,17 +310,25 @@ impl TextEngine {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        for look in &looks {
+        for (look, span) in looks.iter().zip(spans) {
             let s = &look.style;
             for family in std::iter::once(&s.family).chain(&s.fallback) {
-                if !self.has_face(&TextStyle {
+                let face = self.face(&TextStyle {
                     family: family.clone(),
                     ..s.clone()
-                }) {
+                });
+                let Some(face) = face else {
                     return Err(invalid(format!(
                         "font face not supplied: {family} weight={} italic={}",
                         s.weight, s.italic
                     )));
+                };
+                if let Some(usage) = &mut self.usage {
+                    usage
+                        .entry(face)
+                        .or_default()
+                        .unicodes
+                        .extend(span.text.chars().map(u32::from));
                 }
             }
             if s.gradient != base.gradient {
@@ -474,6 +531,13 @@ impl TextEngine {
                     .get(&g.font_id)
                     .ok_or_else(|| invalid("font resolver returned an unregistered face"))?;
                 let c = g.color_opt.unwrap_or(default.color_opt.unwrap());
+                if let Some(usage) = &mut self.usage {
+                    usage
+                        .entry((*font, *index))
+                        .or_default()
+                        .glyphs
+                        .insert(g.glyph_id);
+                }
                 let text = run.text.get(g.start..g.end).unwrap_or("").to_owned();
                 if g.glyph_id == 0 && !text.chars().all(char::is_whitespace) {
                     return Err(invalid(format!("font has no glyph for {text:?}")));
@@ -527,16 +591,23 @@ impl TextEngine {
         found
     }
     pub fn has_face(&self, style: &TextStyle) -> bool {
-        self.system.db().faces().any(|f| {
-            f.families.iter().any(|n| n.0 == style.family)
-                && f.weight.0 == style.weight
-                && f.style
-                    == if style.italic {
-                        cosmic_text::fontdb::Style::Italic
-                    } else {
-                        cosmic_text::fontdb::Style::Normal
-                    }
-        })
+        self.face(style).is_some()
+    }
+    fn face(&self, style: &TextStyle) -> Option<(usize, u32)> {
+        self.system
+            .db()
+            .faces()
+            .find(|f| {
+                f.families.iter().any(|n| n.0 == style.family)
+                    && f.weight.0 == style.weight
+                    && f.style
+                        == if style.italic {
+                            cosmic_text::fontdb::Style::Italic
+                        } else {
+                            cosmic_text::fontdb::Style::Normal
+                        }
+            })
+            .and_then(|f| self.faces.get(&f.id).copied())
     }
 }
 

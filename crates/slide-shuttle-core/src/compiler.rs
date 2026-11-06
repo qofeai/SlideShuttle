@@ -23,6 +23,7 @@ pub struct CompiledDocument {
     export_id: String,
     profile: String,
     png_cache: Arc<Mutex<PngCache>>,
+    font_usage: std::collections::BTreeMap<(usize, u32), FontUsage>,
 }
 
 #[derive(Default)]
@@ -66,7 +67,7 @@ impl Compiler {
         if size > 256 * 1024 * 1024 {
             return Err(model::invalid("resource budget exceeds 256 MiB"));
         }
-        let text = TextEngine::new(&resources)?;
+        let text = TextEngine::from_shared(resources.clone())?;
         let profile = baseline::profile(&resources)?;
         Ok(Self {
             resources,
@@ -79,8 +80,15 @@ impl Compiler {
     pub fn compile(&mut self, source: &str) -> Result<CompiledDocument> {
         self.compile_deck(parse(source)?)
     }
+    /// Enable font-use collection for packaging. Viewers leave this disabled.
+    pub fn collect_font_usage(&mut self, enabled: bool) {
+        self.text.usage = enabled.then(Default::default);
+    }
     /// Compile a deck parsed elsewhere, e.g. a multi-file project from [`parse_project`].
     pub fn compile_deck(&mut self, mut deck: Deck) -> Result<CompiledDocument> {
+        if let Some(usage) = &mut self.text.usage {
+            usage.clear();
+        }
         let substitutions = if let Some(family) = &self.fallback_family {
             crate::font_fallback::apply(&mut deck, family, &self.text)?
         } else {
@@ -127,6 +135,7 @@ impl Compiler {
             export_id,
             profile: self.profile.clone(),
             png_cache: Arc::new(Mutex::new(PngCache::default())),
+            font_usage: self.text.usage.clone().unwrap_or_default(),
         })
     }
     pub fn compilations(&self) -> u64 {
@@ -178,6 +187,9 @@ impl Compiler {
 }
 
 impl CompiledDocument {
+    pub fn font_usage(&self) -> &std::collections::BTreeMap<(usize, u32), FontUsage> {
+        &self.font_usage
+    }
     pub fn deck(&self) -> &Deck {
         &self.deck
     }

@@ -1,4 +1,5 @@
 import os
+import json
 import stat
 import sys
 import tempfile
@@ -16,6 +17,17 @@ from render_and_score import structure
 
 
 class HarnessTests(unittest.TestCase):
+    def test_failed_build_with_a_delivery_is_never_deleted_on_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            (out / 'deliverables').mkdir()
+            artifact = out / 'deliverables/presentation.qppt'
+            artifact.write_bytes(b'preserve the completed package')
+            (out / 'build.json').write_text(json.dumps({'status': 'failed'}))
+            with self.assertRaises(ValueError):
+                skill_build.prepare_out_dir(out)
+            self.assertEqual(artifact.read_bytes(), b'preserve the completed package')
+
     def test_incomplete_generation_is_not_a_success(self):
         with self.assertRaises(ValueError):extract_deck("<Deck><Slide/>")
         self.assertEqual(extract_deck('```xml\n<Deck><Slide/></Deck>\n```'),"<Deck><Slide/></Deck>")

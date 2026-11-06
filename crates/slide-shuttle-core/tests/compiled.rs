@@ -26,6 +26,28 @@ fn source(text: &str) -> String {
 }
 
 #[test]
+fn font_usage_belongs_to_each_compilation_and_includes_shaped_ligatures() {
+    let mut compiler = Compiler::new(resources()).unwrap();
+    assert!(
+        compiler
+            .compile(&source("No collection in viewers"))
+            .unwrap()
+            .font_usage()
+            .is_empty()
+    );
+    compiler.collect_font_usage(true);
+    let first = compiler.compile(&source("office é العربية")).unwrap();
+    assert!(first.font_usage()[&(0, 0)].unicodes.contains(&0x301));
+    assert!(!first.font_usage()[&(0, 0)].glyphs.is_empty());
+    let second = compiler
+        .compile(&source("<Span style=\"font-weight:700\">Bold</Span>"))
+        .unwrap();
+    assert!(second.font_usage().contains_key(&(1, 0)));
+    assert!(!first.font_usage().contains_key(&(1, 0)));
+    assert!(!second.font_usage()[&(0, 0)].unicodes.contains(&0x301));
+}
+
+#[test]
 fn compiled_document_is_reusable_and_survives_compiler_drop() {
     let mut compiler = Compiler::new(resources()).unwrap();
     let first = compiler.compile(&source("Original document")).unwrap();

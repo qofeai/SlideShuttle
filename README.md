@@ -8,7 +8,7 @@
 
 ## 开始使用
 
-需要 Rust 1.92+。核心库不扫描系统字体；命令行也要求显式提供字体文件。中文示例使用 Noto Sans CJK SC 的常规、粗体两个字重；没有本机字体时可用 `python3 tools/fetch_fonts.py` 下载到 `examples/fonts/`：
+需要 Rust 1.92+。CLI 的字体打包使用内置 HarfBuzz，源码构建还需要 C++ 编译器与 libclang（Ubuntu：`apt install g++ libclang-dev`）；已构建的 CLI 不依赖系统 HarfBuzz 或 Python 字体工具。core/WASM 不包含子集库。核心库不扫描系统字体；命令行也要求显式提供字体文件。中文示例使用 Noto Sans CJK SC 的常规、粗体两个字重；没有本机字体时可用 `python3 tools/fetch_fonts.py` 下载到 `examples/fonts/`：
 
 ```bash
 cargo build -p slide-shuttle-cli
@@ -25,6 +25,10 @@ target/debug/slide-shuttle unpack examples/output/demo.qppt --out examples/outpu
 ```
 
 QPPT 包内带字体，打开与渲染无需重复传字体。创作时字体路径按本机位置调整。字体也可在源文件中声明为 `<Font family="…" src="fonts/regular.ttf"/>`。声明的字体、图片路径必须留在源文件目录内；`--font` 可显式提供其他位置的字体。只有常规字体时，使用粗体会报缺少字重，不做静默伪粗体。PNG/PDF 使用提供的字形，PDF 嵌入子集字体；**PPTX 目前只引用字体名称，收件端需要安装相同字体**。
+
+`pack` 默认只嵌入实际使用的字体 face、字符及排版所需字形，并校验轮廓和重新排版结果。旧 QPPT 阅读器可直接打开，无需升级格式。添加新字符时需要完整字体并重新打包；需要离线任意加字时显式使用 `pack --full-fonts`，代价是更大的文件。
+
+Agent 技能默认只交付 `deliverables/presentation.qppt`，预览和检查文件留在内部。用户明确要求时可加 `build.py --export pptx` / `--export pdf`。设计审计是按场景复核的建议，不限制强调色数量。
 
 输出路径必须不存在。再次生成请选择新文件或目录，避免把尚未检查的外部版本覆盖。
 

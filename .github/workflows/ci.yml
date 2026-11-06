@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y g++ libclang-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -26,6 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y g++ libclang-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -43,6 +45,8 @@ jobs:
       - run: npm ci --prefix tools/browser
       - run: tools/browser/node_modules/.bin/playwright install --with-deps chromium
       - run: cargo build -p slide-shuttle-cli --locked
+      - name: Compact CJK packages preserve pixels, vertical text and fallback
+        run: python3 tools/compact_qppt_smoke.py --cli target/debug/slide-shuttle --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc
       - name: Native reference files
         run: |
           target/debug/slide-shuttle render examples/demo.xml --out examples/output/preview --pdf --font examples/fonts/NotoSansCJK-Regular.ttc --font examples/fonts/NotoSansCJK-Bold.ttc

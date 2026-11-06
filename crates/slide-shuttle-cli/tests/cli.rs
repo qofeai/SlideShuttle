@@ -34,6 +34,167 @@ fn setup() -> tempfile::TempDir {
     dir
 }
 
+fn packed_document(path: &Path) -> slide_shuttle_core::CompiledDocument {
+    use slide_shuttle_core::{Compiler, package::Project};
+    let mut project = Project::read(&fs::read(path).unwrap()).unwrap();
+    let deck = project.deck().unwrap();
+    Compiler::new(project.take_resources(&deck).unwrap())
+        .unwrap()
+        .compile_deck(deck)
+        .unwrap()
+}
+
+#[test]
+fn compact_fonts_preserve_shaping_generated_labels_and_declared_sources() {
+    let root = setup();
+    let p = root.path();
+    fs::create_dir(p.join("fonts")).unwrap();
+    fs::copy(font(), p.join("fonts/regular.ttf")).unwrap();
+    fs::copy(
+        font().with_file_name("DejaVuSans-Bold.ttf"),
+        p.join("fonts/bold.ttf"),
+    )
+    .unwrap();
+    let source = r#"<Deck width="1000px" height="800px" font-family="DejaVu Sans"><Library src="design.xml"/><Slide src="pages/s.xml"/></Deck>"#;
+    let library = r#"<Library><!-- keep author comments --><Font family="DejaVu Sans" src="./fonts/regular.ttf"/><Font family="DejaVu Sans" src="fonts/bold.ttf"/></Library>"#;
+    fs::write(p.join("source.xml"), source).unwrap();
+    fs::write(p.join("design.xml"), library).unwrap();
+    fs::write(p.join("pages/s.xml"), r#"<Slide id="s">
+      <Text id="text" style="font-size:24px;width:900px;height:90px">office ffi café é Ελληνικά العربية <Span style="font-weight:700">Bold</Span></Text>
+      <Text id="list" style="position:absolute;left:0px;top:100px;width:900px;height:100px;font-size:24px"><List><Item>List item</Item><Item>Second</Item></List></Text>
+      <Table id="table" columns="1 1" style="position:absolute;top:220px;width:800px;font-size:24px"><Row><Cell>Table label</Cell><Cell>42</Cell></Row></Table>
+      <Chart id="chart" type="bar" min="0" max="10" style="position:absolute;top:320px;width:800px;height:350px;font-size:20px"><Labels>A|B</Labels><Series name="Series">2 7</Series></Chart>
+      <Animate target="text" effect="appear"/>
+    </Slide>"#).unwrap();
+    let report = success(run(
+        p,
+        &["pack", "source.xml", "--out", "compact.qppt"],
+        false,
+    ));
+    assert_eq!(report["fonts"]["mode"], "subset");
+    assert_eq!(report["fonts"]["faces"], 2);
+    assert!(report["fonts"]["embeddedBytes"].as_u64().unwrap() < 100_000);
+    success(run(
+        p,
+        &["pack", "source.xml", "--out", "full.qppt", "--full-fonts"],
+        false,
+    ));
+    let original = packed_document(&p.join("full.qppt"));
+    let compact = packed_document(&p.join("compact.qppt"));
+    assert_eq!(
+        original.render_png(0, 1.0).unwrap(),
+        compact.render_png(0, 1.0).unwrap()
+    );
+    for step in 0..original.step_count(0).unwrap() {
+        assert_eq!(
+            original.render_png_step(0, step, 1.0).unwrap(),
+            compact.render_png_step(0, step, 1.0).unwrap()
+        );
+    }
+    assert_eq!(fs::read_to_string(p.join("source.xml")).unwrap(), source);
+    assert_eq!(fs::read_to_string(p.join("design.xml")).unwrap(), library);
+    let package =
+        slide_shuttle_core::package::Project::read(&fs::read(p.join("compact.qppt")).unwrap())
+            .unwrap();
+    assert!(package.files["design.xml"].contains("keep author comments"));
+    assert!(!package.files["design.xml"].contains("<Font"));
+    assert!(!package.assets.contains_key("fonts/regular.ttf"));
+    assert_eq!(
+        original.resources().fonts[0].bytes,
+        fs::read(font()).unwrap()
+    );
+}
+
+#[test]
+fn compact_fonts_drop_unused_weight_and_support_shapes_only() {
+    let root = setup();
+    let p = root.path();
+    let bold = font().with_file_name("DejaVuSans-Bold.ttf");
+    let report = success(run(
+        p,
+        &[
+            "pack",
+            "source.xml",
+            "--out",
+            "regular.qppt",
+            "--font",
+            bold.to_str().unwrap(),
+        ],
+        true,
+    ));
+    assert_eq!(report["fonts"]["faces"], 1);
+    assert!(report["bytes"].as_u64().unwrap() < 30_000);
+    fs::write(p.join("pages/s.xml"), r#"<Slide id="s"><Shape id="box" style="width:100px;height:100px;background:#ff0000"/></Slide>"#).unwrap();
+    success(run(
+        p,
+        &["pack", "source.xml", "--out", "shapes.qppt"],
+        true,
+    ));
+    assert!(
+        packed_document(&p.join("shapes.qppt"))
+            .render_png(0, 1.0)
+            .is_ok()
+    );
+}
+
+#[test]
+fn skill_delivers_only_requested_formats_and_keeps_review_internal() {
+    let root = setup();
+    let p = root.path();
+    // Four meaningful colours and no claim title are valid design choices, even
+    // when readability warnings are explicitly made blocking.
+    fs::write(p.join("pages/s.xml"), r##"<Slide id="s" background="#ffffff"><Text id="content" style="font-size:24px;line-height:32px;width:600px;height:80px"><Span style="color:#993333">A</Span><Span style="color:#337733">B</Span><Span style="color:#333399">C</Span><Span style="color:#773377">D</Span></Text></Slide>"##).unwrap();
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/slideshuttle/scripts/build.py");
+    for format in [None, Some("pdf"), Some("pptx")] {
+        let out = p.join(format.unwrap_or("default"));
+        let mut cmd = Command::new("python3");
+        cmd.arg(&script)
+            .arg(p.join("source.xml"))
+            .arg("--out")
+            .arg(&out)
+            .arg("--cli")
+            .arg(env!("CARGO_BIN_EXE_slide-shuttle"))
+            .arg("--font")
+            .arg(font())
+            .arg("--strict-design");
+        if let Some(format) = format {
+            cmd.arg("--export").arg(format);
+        }
+        let result = success(cmd.output().unwrap());
+        let files = result["deliverables"].as_array().unwrap();
+        assert_eq!(files.len(), if format.is_some() { 2 } else { 1 });
+        assert!(
+            files[0]
+                .as_str()
+                .unwrap()
+                .ends_with("/deliverables/presentation.qppt")
+        );
+        assert!(out.join("preview/slide-001.png").is_file());
+        assert!(result["review"]["previews"].is_array());
+        assert!(!out.join("preview/deck.pdf").exists());
+        assert_eq!(
+            out.join("deliverables/presentation.pdf").exists(),
+            format == Some("pdf")
+        );
+        assert_eq!(
+            out.join("deliverables/presentation.pptx").exists(),
+            format == Some("pptx")
+        );
+        assert_eq!(
+            fs::read_dir(out.join("deliverables")).unwrap().count(),
+            files.len()
+        );
+        assert!(
+            result["designAudit"]["hints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["code"] == "palette_review")
+        );
+    }
+}
+
 #[test]
 fn cli_bare_path_native_outputs_and_refuses_existing_file() {
     let root = setup();
