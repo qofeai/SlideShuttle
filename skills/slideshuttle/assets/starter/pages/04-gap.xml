@@ -1,0 +1,10 @@
+<Slide id="gap" type="section" background="#D9542B">
+  <Box id="frame" class="page" style="justify-content:flex-end;gap:24px">
+    <Text id="title" style="font-size:48px;line-height:64px;font-weight:700;color:var(--paper)"><Span style="font-size:240px;line-height:240px">62%</Span><br/>的新会员，第一个月只来过一次。</Text>
+    <Text id="consequence" class="lead" style="color:#FBE3D9">流失发生在习惯形成之前。</Text>
+  </Box>
+  <Notes>
+    停顿。这是整份汇报的转折：会员本身有效，问题在激活。
+    3,412 名新会员中有 2,115 人在加入后 30 天内只到店一次。
+  </Notes>
+</Slide>

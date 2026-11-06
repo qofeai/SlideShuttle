@@ -1,10 +1,16 @@
+import os
+import stat
 import sys
 import tempfile
+import types
 import unittest
+from unittest.mock import patch
 import zipfile
 from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent / "skills/slideshuttle/scripts"))
+import build as skill_build
 from evaluate_pilot import extract_deck,normal,potential_overlaps,quoted_requirements
 from render_and_score import structure
 
@@ -37,6 +43,31 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(result["nativeCharts"],1)
             self.assertEqual(result["peiUpperBound"],2)
             self.assertFalse(result["peiL3MasterInheritanceVerified"])
+
+    def test_build_discovers_cli_and_fonts_without_repo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory) / "prefix"
+            (prefix / "bin").mkdir(parents=True)
+            (prefix / "share/fonts").mkdir(parents=True)
+            cli = prefix / "bin/slide-shuttle"
+            cli.write_bytes(b"binary")
+            cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
+            for weight in ["Regular", "Bold"]:
+                (prefix / f"share/fonts/NotoSansCJK-{weight}.ttc").write_bytes(b"font")
+            args = types.SimpleNamespace(repo=None, cli=None, font=[], doctor=True, source=None)
+            fake_proc = types.SimpleNamespace(stdout="slide-shuttle 0.3.0\n", returncode=0)
+            with patch.object(skill_build, "repository", return_value=None), patch.object(
+                skill_build.shutil, "which", return_value=str(cli)
+            ), patch.object(skill_build.subprocess, "run", return_value=fake_proc):
+                info = skill_build.runtime(args)
+            self.assertEqual(info["cli"], str(cli.resolve()))
+            self.assertEqual(
+                info["fonts"],
+                [
+                    str((prefix / "share/fonts/NotoSansCJK-Regular.ttc").resolve()),
+                    str((prefix / "share/fonts/NotoSansCJK-Bold.ttc").resolve()),
+                ],
+            )
 
 
 if __name__=="__main__":unittest.main()

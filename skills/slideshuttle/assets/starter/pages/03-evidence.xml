@@ -1,23 +1,25 @@
-<Slide id="evidence" type="content" background="#FFFFFF">
-  <Box id="frame" class="frame">
-    <Text id="kicker" class="kicker">02 / GIVE EVIDENCE ENOUGH ROOM</Text>
-    <Text id="title" class="heading">让证据占据足够大的位置。</Text>
-    <Box id="grid" style="display:grid;grid-template-columns:7fr 5fr;gap:48px;height:390px">
-      <Chart id="chart" type="bar" class="chart" data-labels="value" style="height:380px">
-        <Labels>阶段一|阶段二|阶段三|阶段四</Labels>
-        <Series name="示例 A">24 40 62 80</Series>
-        <Series name="示例 B">18 32 48 64</Series>
+<Slide id="evidence" type="content" background="#F7F5F0">
+  <Box id="frame" class="page">
+    <Text id="title" class="title">第 4 周起，会员与非会员的复购差距持续拉开</Text>
+    <Box id="grid" class="body" style="display:grid;grid-template-columns:8fr 4fr;gap:56px">
+      <Chart id="chart" type="line" class="chart" legend="top" markers="true" min="0" max="50" step="10" format="0&quot;%&quot;" style="height:100%">
+        <Labels>第 1 周|第 2 周|第 3 周|第 4 周|第 5 周|第 6 周|第 7 周|第 8 周</Labels>
+        <Series name="会员">16 18 20 26 32 37 42 46</Series>
+        <Series name="非会员">15 17 18 19 20 21 21 22</Series>
       </Chart>
-      <Box id="caption" style="display:flex;flex-direction:column;gap:18px;padding:12px 0">
-        <Text id="sample" style="height:32px;font-size:18px;line-height:30px;color:var(--accent)">演示数据 / 非真实测量</Text>
-        <Text id="number" style="height:128px;font-size:108px;line-height:128px;font-weight:700;color:var(--ink)">80</Text>
-        <Text id="claim" style="height:84px;font-size:28px;line-height:42px;font-weight:700;color:var(--ink)">解释靠近证据，<br/>重点无需来回寻找。</Text>
-        <Text id="explanation" style="height:64px;font-size:20px;line-height:32px;color:#536B78">用紧邻图表的标注解释含义，<br/>保留单位、范围和必要来源。</Text>
+      <Box id="reading" style="display:flex;flex-direction:column;justify-content:flex-end;gap:20px">
+        <Text id="gap" class="figure" style="color:var(--accent)">+24<Span style="font-size:30px"> 个百分点</Span></Text>
+        <Text id="gap-label" class="text" style="color:var(--ink)">第 8 周复购率<br/>会员 46%，非会员 22%</Text>
+        <Shape id="divider" style="width:100%;height:1px;background:var(--rule)"/>
+        <Text id="reading-note" class="text">差距在第 4 周后才出现：<br/>第一个月决定习惯能否形成。</Text>
+        <Text id="source" class="caption">来源：6 家试点门店 POS，2026.07–09</Text>
       </Box>
     </Box>
-    <Text id="note" style="height:56px;font-size:18px;line-height:28px;color:#677B82">本页数据仅供展示布局，不代表真实测量、业务表现或基准成绩。真实任务应替换为有来源的数据。</Text>
   </Box>
-  <Animate target="chart" effect="wipe-in"/>
-  <Animate target="number" effect="fade-in" trigger="after-previous"/>
-  <Animate target="claim" effect="fade-in" trigger="with-previous"/>
+  <Animate target="chart" effect="wipe-in" direction="right"/>
+  <Animate target="gap" effect="fade-in" trigger="after-previous"/>
+  <Notes>
+    对照组用灰色，只让会员曲线和差距数字使用强调色。
+    强调第 4 周这个拐点：前三周两组差别不大，习惯在第一个月里形成。
+  </Notes>
 </Slide>

@@ -1,0 +1,16 @@
+<Slide id="summary" type="content" background="#F7F5F0">
+  <Box id="frame" class="page">
+    <Text id="title" class="title">试点有效：Q4 应扩到全部门店，并补上首月激活</Text>
+    <Box id="body" class="body" style="display:flex;flex-direction:column;justify-content:center">
+      <Box id="figures" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:48px">
+        <Use id="lift" component="KeyFigure" value="2.1×" color="var(--ink)" label="会员 8 周复购率是非会员的 2.1 倍"/>
+        <Use id="drop" component="KeyFigure" value="62%" color="var(--accent)" label="新会员第一个月只来过一次"/>
+        <Use id="scale" component="KeyFigure" value="12 家" color="var(--ink)" label="覆盖全部门店，预算 ¥10.8 万"/>
+      </Box>
+    </Box>
+  </Box>
+  <Notes>
+    先给答案，后面三页分别展开这三个数字。
+    2.1 倍来自第 3 页的 8 周复购曲线；62% 是第 4 页的首月流失；12 家与预算在第 5、6 页。
+  </Notes>
+</Slide>
