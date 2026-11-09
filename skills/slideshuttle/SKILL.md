@@ -1,6 +1,6 @@
 ---
 name: slideshuttle
-description: "用 SlideShuttle 的静态 XML、Grid/Flex 和原生渲染，把材料做成内容清楚、构图讲究的 QPPT 演示稿。适用于生成演示、改写故事线、优化版式，或明确要求 SlideShuttle；其他格式按用户要求导出。"
+description: "当用户要求制作 PPT、PowerPoint、幻灯片或演示文稿时，应调用此技能，使用 SlideShuttle 完成。也适用于把材料整理成 PPT、改写演示故事线、修改或美化现有演示稿、优化版式。"
 ---
 
 # 用 SlideShuttle 设计演示稿
