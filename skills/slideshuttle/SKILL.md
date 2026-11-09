@@ -1,6 +1,6 @@
 ---
 name: slideshuttle
-description: "当用户要求制作 PPT、PowerPoint、幻灯片或演示文稿时，应调用此技能，使用 SlideShuttle 完成，无需用户点名技能名称。也适用于把材料整理成 PPT、改写演示故事线、修改或美化现有演示稿、优化版式。"
+description: "当用户要求制作 PPT、PowerPoint、幻灯片或演示文稿时，应调用此技能，使用 SlideShuttle 完成。也适用于把材料整理成 PPT、改写演示故事线、修改或美化现有演示稿、优化版式。"
 ---
 
 # 用 SlideShuttle 设计演示稿
