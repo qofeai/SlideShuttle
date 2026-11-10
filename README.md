@@ -1,10 +1,64 @@
-# SlideShuttle
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/slideshuttle-horizontal-dark.svg">
+    <img src="docs/logo/slideshuttle-horizontal.svg" alt="SlideShuttle" width="440">
+  </picture>
+</h1>
+
+<p align="center">
+  <b>Rust 原生演示文稿引擎</b><br>
+  一份静态声明，原生渲染 PNG / PDF，直接预览与放映，并导出包含原生对象的 PPTX。
+</p>
+
+<p align="center">
+  <a href="https://github.com/qofeai/SlideShuttle/actions/workflows/ci.yml"><img src="https://github.com/qofeai/SlideShuttle/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/rust-1.92%2B-EE5A2E" alt="Rust 1.92+">
+  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-C6401F" alt="MIT OR Apache-2.0">
+</p>
+
+<p align="center">
+  <a href="#开始使用">开始使用</a> ·
+  <a href="#语言示例">语言</a> ·
+  <a href="docs/QPPT.md">QPPT</a> ·
+  <a href="#wasm">WASM</a> ·
+  <a href="#创作-skill">创作 Skill</a> ·
+  <a href="#文档">文档</a> ·
+  <a href="docs/STATUS.md">状态</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/showcase.png" alt="由 SlideShuttle 原生渲染的六页示例文稿" width="100%">
+</p>
+<p align="center"><sub>以上六页由 <a href="skills/slideshuttle/assets/starter">Skill 自带的示例工程</a>经 <code>slide-shuttle render</code> 原生渲染，数据为示例。</sub></p>
 
 独立的 Rust 原生演示文稿引擎。Agent 用接近 HTML/CSS 的静态声明描述页面，用户可通过 WASM 直接查看原生文稿、按点击步骤放映；同一布局与文字整形引擎生成 PNG、PDF，以及包含原生对象的 PPTX。预览和放映无需先转换为 PPTX。
 
 正式原生交付格式为 **`.qppt`**：多文件工程、字体和资源的 ZIP 封装，没有版本字段，见 [QPPT 格式](docs/QPPT.md)。即使一页也使用独立页面文件。
 
 当前包版本 **0.3.0**，提供原生渲染库、CLI 和运行于 Web Worker 的 WASM 预览器。格式由本项目定义，不读取 Kimi 的 PPTD；核心渲染不依赖浏览器或 Office 服务。**不承诺任意 PPTX 无损往返，也尚未通过真实 PowerPoint / WPS 验收。**
+
+## 一览
+
+| | |
+|---|---|
+| **静态声明语言** | 接近 HTML/CSS 的 XML：`Box`、`Text`、`Image`、`Shape`、`Path`、`Table`、`Chart`，Flex / Grid 布局，`Token`、`Style`、`Component` 复用。不执行 JavaScript。 |
+| **同一引擎，多种产物** | PNG 与 PDF 消费同一份已整形、定位的字形；PPTX 保留文本和原生对象，可继续编辑。 |
+| **`.qppt` 单文件交付** | 多文件工程、字体和资源的 ZIP 封装，打开即可编译、预览，无需重复提供字体。 |
+| **WASM 预览与放映** | 在 Web Worker 内编译和渲染，按点击步骤放映，无需先转换为 PPTX。 |
+| **导入与改稿保护** | 有限 PPTX 导入，基线 / 外部稿 / 计划输出三路比较，未处理的差异会阻断导出。 |
+| **为 Agent 而设** | 随附创作 Skill：简报、设计系统、原生渲染、看图改稿到交付。 |
+
+```mermaid
+flowchart LR
+  P["已有 PPTX"] -. "import（有限重建）" .-> A["多文件 XML 工程<br/>字体 · 图片"]
+  A -- pack --> Q[".qppt"]
+  A --> C["slide-shuttle-core<br/>解析 · 布局 · 文字整形"]
+  Q --> C
+  C --> PNG
+  C --> PDF
+  C --> X["PPTX（原生对象）"]
+  C --> W["WASM 预览 / 按步放映"]
+```
 
 ## 开始使用
 
@@ -173,3 +227,23 @@ python3 skills/slideshuttle/scripts/build.py /path/to/deck.xml --out /path/to/ou
 ```
 
 构建会检查并生成 QPPT、PPTX、PDF、逐页 PNG、全稿总览图（未安装 Pillow 时用原生引擎拼版）、标题大纲 `outline.md` 与本地静态总览，自动提供项目自带的中文常规/粗体；可用 --repo / --cli / --font 指定其他运行环境。视觉复核仍由创作 Agent 查看实际渲染完成。已有 PPTX 的损失/基线保护继续由 CLI 执行。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [语言说明](docs/LANGUAGE.md) | 源语言完整语法、项目结构与限制 |
+| [预设形状](docs/SHAPES.md) | 187 种 OOXML 预设几何与 `adjust` 参数 |
+| [QPPT 格式](docs/QPPT.md) | 原生交付文件的工程与封装 |
+| [渲染说明](docs/RENDERING.md) | 原生渲染、放映、WASM API 与文字测量 |
+| [OOXML 导入说明](docs/OOXML-IMPORT.md) | 主题色、透明度与默认文字样式的导入范围 |
+| [给创作 Agent 的操作约定](docs/AGENT-AUTHORING.md) | Agent 使用本项目时的约定 |
+| [实现与验证状态](docs/STATUS.md) | 已验证事项、依赖来源与剩余验收项 |
+| [架构审查](docs/AUDIT-2026-11-03.md) · [基准实测](docs/BENCHMARK-2026-11-02.md) | 性能、客户端接入缺口与公开任务实测 |
+| [标识](docs/logo/README.md) | Logo 文件、颜色与使用规则 |
+
+## 许可
+
+代码以 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 双许可发布，任选其一。随附字体的许可见 [examples/fonts](examples/fonts/README.md)。
+
+SlideShuttle 是独立项目，与 Microsoft 无关联；PowerPoint 是 Microsoft 的商标。
